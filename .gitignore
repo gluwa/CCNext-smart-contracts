@@ -1,0 +1,24 @@
+**/dist/
+**/target/
+**/node_modules/
+**/*.rs.bk
+*.swp
+**/._*
+**/.criterion/
+.vscode
+.DS_Store
+.idea/
+
+# hardhat
+**/cache/
+**/typechain-types/
+**/ignition/deployments/
+precompiles/metadata/abi/*.json
+docs/smart-contract-development/with-hardhat/artifacts/*
+
+# temp, output & test files
+**/*output.txt
+**/*compiled.json
+**/*trace.json
+**/*memory.json
+common/eth/.openzeppelin/unknown-*.json
