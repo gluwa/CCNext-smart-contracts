@@ -5,6 +5,7 @@ import {Initializable, AccessControlUpgradeable} from "@openzeppelin/contracts-u
 import {IERC20Mintable} from "./abstract/ERC20Mintable.sol";
 import {ICreditcoinPublicProver} from "./Prover.sol";
 import {DecodeRLP} from "./abstract/DecodeRLP.sol";
+
 contract UniversalBridgeProxy is
     Initializable,
     AccessControlUpgradeable,
@@ -183,11 +184,13 @@ contract UniversalBridgeProxy is
         // transaction on the source chain.
         QueryDetails memory queryDetails = prover.getQueryDetails(queryId);
         require(hasRole(DEFAULT_ADMIN_ROLE, queryDetails.principal));
+        require(
+            queryDetails.state == QueryState.ResultAvailable,
+            "Query result not available"
+        );
 
         // Result segment availability validated on prover side
-        ResultSegment[] memory resultSegments = prover.getQueryResultSegments(
-            queryId
-        );
+        ResultSegment[] memory resultSegments = queryDetails.resultSegments;
         // Result segments for default ERC20 Transfer correspond to these fields:
         // 0: Rx - Status
         // 1: Tx - From

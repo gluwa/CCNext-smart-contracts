@@ -35,6 +35,7 @@ struct QueryDetails {
     address principal;
     Balance estimatedCost;
     uint256 timestamp;
+    ResultSegment[] resultSegments;
 }
 
 enum QueryState {

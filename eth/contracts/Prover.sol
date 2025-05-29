@@ -6,9 +6,6 @@ import "./abstract/Ownable.sol";
 
 address constant PROOF_VERIFIER_ADDRESS = 0x0000000000000000000000000000000000000Be9;
 interface ICreditcoinPublicProver {
-    function getQueryResultSegments(
-        bytes32 queryId
-    ) external view returns (ResultSegment[] memory resultSegments);
     function getQueryDetails(
         bytes32 queryId
     ) external view returns (QueryDetails memory queryDetails);
@@ -325,24 +322,6 @@ contract CreditcoinPublicProver is ICreditcoinPublicProver, Ownable {
                 ++i;
             }
         }
-    }
-
-    function getQueryResultSegments(
-        bytes32 queryId
-    ) public view override returns (ResultSegment[] memory) {
-        QueryId typedQueryId = QueryId.wrap(queryId);
-        QueryState state = queries[typedQueryId].state;
-        require(
-            state == QueryState.ResultAvailable,
-            "Query result not available"
-        );
-
-        ResultSegment[]
-            memory resultSegments = _call_verifier_get_result_segments(
-                typedQueryId
-            );
-
-        return resultSegments;
     }
 
     function isQueryTimedOut(QueryId queryId) public view returns (bool) {
