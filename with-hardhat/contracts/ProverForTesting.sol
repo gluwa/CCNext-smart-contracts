@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import './utility/console.sol';
-import './Prover.sol';
+import  "@gluwa/universal-smart-contract/contracts/Prover.sol";
 
 contract ProverForTesting is CreditcoinPublicProver {
     uint64 private fakeVerifierResult;
