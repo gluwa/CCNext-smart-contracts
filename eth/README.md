@@ -17,7 +17,7 @@ npx hardhat compile
 ```
 
 # 3. Run script to deploy contracts
-Deploy at target network as `cc_devnet`
+Deploy at target network as `ccnext_devnet`
 ```shell
-npx hardhat deploy --network cc_devnet --proceedsaccount <your-address> --costperbyte 10 --basefee 100 --chainkey 42 --displayname "My Contract" --timeout 300 --lockupduration 86400 --approvalthreshold 1 --maxinstantmint 10 --admin <your-address>
+npx hardhat deploy --network ccnext_devnet --proceedsaccount 0x2970c5a6259a0a469c3163f896bebde63b6f2254 --costperbyte 10 --basefee 100 --chainkey 102032 --displayname "My Contract" --timeout 300 --lockupduration 86400 --approvalthreshold 1 --maxinstantmint 10 --admin 0x2970c5a6259a0a469c3163f896bebde63b6f2254
 ```

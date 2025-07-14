@@ -38,6 +38,12 @@ const config: HardhatUserConfig = {
       chainId: 102032,
       accounts: [`${DEFAULT_OWNER}`]
     }
+    ,
+    ccnext_devnet: {
+      url: "https://rpc.ccnext-devnet.creditcoin.network",
+      chainId: 42,
+      accounts: [`${DEFAULT_OWNER}`]
+    }
   },
   mocha: {
     timeout: 2000000
