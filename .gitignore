@@ -13,8 +13,6 @@
 **/cache/
 **/typechain-types/
 **/ignition/deployments/
-precompiles/metadata/abi/*.json
-docs/smart-contract-development/with-hardhat/artifacts/*
 
 # temp, output & test files
 **/*output.txt

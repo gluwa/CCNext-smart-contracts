@@ -1,1 +1,0 @@
-../../../cli/.eslintrc.js
