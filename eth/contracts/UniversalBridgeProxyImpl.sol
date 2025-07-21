@@ -5,8 +5,8 @@ import "@gluwa/universal-smart-contract/contracts/abstract/Types.sol";
 import {DecodeRLP} from "@gluwa/universal-smart-contract/contracts/abstract/DecodeRLP.sol";
 
 import {Initializable, AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
-import {UniversalBridgeProxy} from "@gluwa/universal-smart-contract/contracts/UniversalBridgeProxy.sol";
-import {ICreditcoinPublicProver} from "@gluwa/universal-smart-contract/contracts/Prover.sol";
+import {UniversalBridgeProxy} from "./UniversalBridgeProxy.sol";
+import {ICreditcoinPublicProver} from "@gluwa/creditcoin-public-prover/contracts/sol/Prover.sol";
 
 /**
  * @dev User-defined implementation contract containing hook logic for:

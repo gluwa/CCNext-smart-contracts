@@ -1,21 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {ICreditcoinPublicProver} from "@gluwa/universal-smart-contract/contracts/Prover.sol";
-import {ResultSegment} from "@gluwa/universal-smart-contract/contracts/abstract/Types.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 library LoanModel {
     enum LoanState {
-        /*1*/
+        /*0*/
         Active,
-        /*2*/
+        /*1*/
         Funded,
-        /*3*/
-        Canceled,
-        /*4*/
+        /*2*/
         Repaid,
-        /*5*/
+        /*3*/
         Expired
     }
     struct LoanTerm {
@@ -28,7 +23,6 @@ library LoanModel {
         uint256 creationDate;
         uint256 maturityDate;
         uint256 repaymentDeadline;
-        uint256 yield;
         uint256 repaymentDue;
         uint256 totalRepayment;
         bytes borrowerSig;
@@ -166,19 +160,24 @@ library HashMapIndex {
 
 interface ILoan {
     event LoanTermCreated(bytes32 indexed loanHash, address indexed lender, address indexed borrower, uint256 principal, uint32 interestRate, uint32 interestRatePercentageBase, uint256 maturityTerm, uint256 repaymentDeadline);
-    event LoanFundInitiated(bytes32 indexed loanHash, address indexed lender, address indexed borrower, uint256 amount, LoanModel.LoanState state);
-    event LoanRepaid(bytes32 indexed loanHash, address indexed borrower, address indexed lender, uint256 totalRepayment, LoanModel.LoanState state);
-    event LoanPartiallyRepaid(bytes32 indexed loanHash, address indexed borrower, address indexed lender, uint256 repayAmount, uint256 remainingAmount, LoanModel.LoanState state);
-    event LoanExpired(bytes32 indexed loanHash, uint256 repaymentDeadline, uint256 currentBlock);
+    event LoanFundInitiated(bytes32 indexed loanHash, address indexed lender, address indexed borrower, uint256 amount);
+    event LoanRepaid(bytes32 indexed loanHash, address indexed borrower, uint256 amount);
+    event LoanPartiallyRepaid(bytes32 indexed loanHash, address indexed borrower, address indexed lender, uint256 repayAmount, uint256 remainingAmount);
+    event LoanExpired(bytes32 indexed loanHash, address indexed borrower);
+    event LoanLateRepayment(bytes32 indexed loanHash, address indexed borrower);
 }
 
 contract Loan is ILoan {
     using HashMapIndex for HashMapIndex.HashMapping;
     using ECDSA for bytes32;
-
+    uint256 public constant LOAN_EXPIRED_TIME = 30 minutes;
     // keccak256(abi.encode(uint256(keccak256("loan.storage")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant STORAGE_LOCATION = 
-        0x5c1f313428252390f87006a4ad2f9ff7dab4057d66066b76617f306a39940ffa;
+    bytes32 private constant STORAGE_LOCATION = 0x5c1f313428252390f87006a4ad2f9ff7dab4057d66066b76617f306a39940ffa;
+    IERC20 public immutable erc20;
+
+    constructor(address _erc20) {
+        erc20 = IERC20(_erc20);
+    }
 
     struct LoanStorage {
         HashMapIndex.HashMapping accountIndex;
@@ -189,7 +188,6 @@ contract Loan is ILoan {
         mapping(address => bool) borrowerRegistry;
         mapping(address => bool) lenderRegistry;
         mapping(address => mapping(bytes32 => bool)) usedQueryId;
-        IERC20 token;
     }
 
     function _getLoanStorage()
@@ -221,29 +219,6 @@ contract Loan is ILoan {
         _;
     }
 
-    modifier loanStateIsNot(bytes32 loanTermHash, LoanModel.LoanState state) {
-        LoanStorage storage $ = _getLoanStorage();
-        require(
-            $.loanTermStorage[loanTermHash].state != state,
-            "Loan: Invalid loan state"
-        );
-        _;
-    }
-
-    modifier checkRepaymentDue(bytes32 loanTermHash) {
-        LoanStorage storage $ = _getLoanStorage();
-        LoanModel.LoanTerm storage loanTerm = $.loanTermStorage[loanTermHash];
-        require(block.number <= loanTerm.repaymentDeadline && loanTerm.maturityDate > block.timestamp, "Loan: Repayment deadline has passed");
-        _;
-    }
-
-    constructor(
-        address tokenAddress
-    ) {
-        LoanStorage storage $ = _getLoanStorage();
-        $.token = IERC20(tokenAddress);
-    }
-
     function getLoanTerm(bytes32 loanTermHash)
         external
         view
@@ -253,35 +228,22 @@ contract Loan is ILoan {
         return $.loanTermStorage[loanTermHash];
     }
 
-    function isRegisteredBorrower(address borrower) external view returns (bool) {
-        LoanStorage storage $ = _getLoanStorage();
-        return $.borrowerRegistry[borrower];
-    }
-
-    function isRegisteredLender(address lender) external view returns (bool) {
-        LoanStorage storage $ = _getLoanStorage();
-        return $.lenderRegistry[lender];
-    }
-
-    struct FundedLoanInfo {
-        bytes32 loanHash;
-        address lender;
-        address borrower;
-        uint256 principal;
-        uint256 totalDue;
-        uint256 totalRepaid;
-        uint256 repaymentDeadline;
-        bool isExpired;
-        uint256 remainingTime;
-    }
-
     function _calculateYield(
         uint64 term,
         uint32 interestRate,
         uint32 interestRatePercentageBase,
         uint256 amount
     ) private pure returns (uint256) {
-        return (amount * interestRate * term) / (interestRatePercentageBase * 31536000); /// @dev 365 days in seconds
+        unchecked {
+            // Break down the calculation to avoid overflow
+            // First calculate the interest portion
+            uint256 interestPortion = (amount * interestRate) / interestRatePercentageBase;
+            
+            // Then calculate the time portion
+            uint256 timePortion = (interestPortion * term) / 31536000;
+            
+            return timePortion;
+        }
     }
 
     /**
@@ -303,10 +265,8 @@ contract Loan is ILoan {
         uint256 maturityTerm,
         uint256 repaymentDeadline
     ) public view returns (bytes32) {
-        LoanStorage storage $ = _getLoanStorage();
         return keccak256(
             abi.encodePacked(
-                $.loanIndex.nextIdx,
                 address(this),
                 lender,
                 borrower,
@@ -370,7 +330,6 @@ contract Loan is ILoan {
                 principal
             ),
             principal: principal,
-            yield: 0,
             totalRepayment: 0,
             borrowerSig: borrowerSig,
             lenderSig: lenderSig,
@@ -409,130 +368,79 @@ contract Loan is ILoan {
         require(signer2 == borrower, "Loan: Invalid borrower signature");
     }
 
-    function _verifyQueryResult(LoanModel.LoanTerm storage loanTerm, address proverContract, bytes32 queryId) private view returns (bool) {
-        ICreditcoinPublicProver prover = ICreditcoinPublicProver(proverContract);
-        ResultSegment[] memory resultSegments = prover.getQueryResultSegments(queryId);
-        require(resultSegments.length >= 8, "Invalid result length");
-        address fromAddress = address(
-            uint160(uint256(bytes32(resultSegments[5].abiBytes)))
-        );
-        require(fromAddress == loanTerm.lender, "Loan: Invalid from address");
-        address toAddress = address(
-            uint160(uint256(bytes32(resultSegments[6].abiBytes)))
-        );
-        require(toAddress == loanTerm.borrower, "Loan: Invalid to address");
-        uint256 amount = uint256(bytes32(resultSegments[7].abiBytes)); 
-        require(amount == loanTerm.principal, "Loan: Invalid amount");
-        return true;
-    }
-
-    function fundLoan(bytes32 loanTermHash, address proverContract, bytes32 queryId) 
+    function fundLoan(bytes32 loanTermHash) 
         external
         loanStateIs(loanTermHash, LoanModel.LoanState.Active) 
     {
+        checkExpiredLoans();
         LoanStorage storage $ = _getLoanStorage();
         LoanModel.LoanTerm storage loanTerm = $.loanTermStorage[loanTermHash];
-        _verifyQueryResult(loanTerm, proverContract, queryId);
-        require(
-            $.loanTermStorage[loanTermHash].lender == msg.sender,
-            "Loan fundOffer: Not the lender of this loanTerm1"
-        );
+        require(loanTerm.lender == msg.sender, "Loan: Not a lender for this loanTerm");
         require(loanTerm.borrower != address(0), "Loan: No borrower for this loanTerm");
-        require(
-            !$.usedQueryId[proverContract][queryId],
-            "QueryId already used"
-        );
-        require(
-            $.token.transferFrom(msg.sender, loanTerm.borrower, loanTerm.principal),
-            "Loan: Unable to transfer loan amount"
-        );
-
+        require(erc20.transferFrom(loanTerm.lender, loanTerm.borrower, loanTerm.principal), "Loan: Transfer failed");
         loanTerm.state = LoanModel.LoanState.Funded;
         $.fundedLoanIndex.add(loanTermHash);
-        emit LoanFundInitiated(loanTermHash, msg.sender, loanTerm.borrower, loanTerm.principal, loanTerm.state);
+        emit LoanFundInitiated(loanTermHash, loanTerm.lender, loanTerm.borrower, loanTerm.principal);
     }
 
-    function cancelOfferOrder(bytes32 loanTermHash) 
-        external
-        isLoanParty(loanTermHash) 
-        loanStateIsNot(loanTermHash, LoanModel.LoanState.Funded) 
-    {
-        LoanStorage storage $ = _getLoanStorage();
-        $.loanTermStorage[loanTermHash].state = LoanModel.LoanState.Canceled;
-    }
-
-    function repay(bytes32 loanTermHash, address proverContract, bytes32 queryId) 
+    function repay(bytes32 loanTermHash) 
         external
         loanStateIs(loanTermHash, LoanModel.LoanState.Funded)
-        checkRepaymentDue(loanTermHash)
     {
+        checkExpiredLoans();
         LoanStorage storage $ = _getLoanStorage();
         LoanModel.LoanTerm storage loanTerm = $.loanTermStorage[loanTermHash];
-        _verifyQueryResult(loanTerm, proverContract, queryId);
-        require(loanTerm.borrower == msg.sender, "Loan repay: Not the borrower of this loan");
-        _processRepayment($, loanTermHash, loanTerm, loanTerm.principal + loanTerm.yield);
+        if(loanTerm.state == LoanModel.LoanState.Expired) return;
+        require(loanTerm.borrower == msg.sender, "Loan: Not a borrower for this loanTerm");
+        _processRepayment($, loanTermHash, loanTerm, loanTerm.repaymentDue - loanTerm.totalRepayment);
     }
 
-    function partialRepay(bytes32 loanTermHash, uint256 repayAmount, address proverContract, bytes32 queryId) 
+    function partialRepay(bytes32 loanTermHash, uint256 repayAmount) 
         external
         loanStateIs(loanTermHash, LoanModel.LoanState.Funded)
-        checkRepaymentDue(loanTermHash)
     {
+        checkExpiredLoans();
         LoanStorage storage $ = _getLoanStorage();
         LoanModel.LoanTerm storage loanTerm = $.loanTermStorage[loanTermHash];
-        _verifyQueryResult(loanTerm, proverContract, queryId);
-        uint256 remainingAmount = loanTerm.repaymentDue - loanTerm.totalRepayment;
-        require(repayAmount <= remainingAmount, "Loan partialRepay: Repay amount exceeds remaining amount");
-
-        require(
-            $.token.transferFrom(msg.sender, address(this), repayAmount),
-            "Loan partialRepay: Unable to transfer repayment amount"
-        );
-
-        loanTerm.totalRepayment += repayAmount;
-        loanTerm.yield = loanTerm.repaymentDue - loanTerm.principal;
-
-        if (loanTerm.totalRepayment >= loanTerm.repaymentDue) {
-            loanTerm.state = LoanModel.LoanState.Repaid;
-            $.fundedLoanIndex.archive(loanTermHash);
-        }
-
-        emit LoanPartiallyRepaid(loanTermHash, msg.sender, loanTerm.lender, repayAmount, remainingAmount - repayAmount, loanTerm.state);
+        if(loanTerm.state == LoanModel.LoanState.Expired) return;
+        require(repayAmount > 0, "Loan: Repay amount must be greater than 0");
+        require(repayAmount <= loanTerm.repaymentDue - loanTerm.totalRepayment, "Loan: Repay amount exceeds remaining amount");
+        require(loanTerm.borrower == msg.sender, "Loan: Not a borrower for this loanTerm");
+        _processRepayment($, loanTermHash, loanTerm, repayAmount);
     }
 
     function _processRepayment(
         LoanStorage storage $,
         bytes32 loanTermHash,
         LoanModel.LoanTerm storage loanTerm,
-        uint256 totalDue
+        uint256 repayAmount
     ) private {
-        uint256 remainingAmount = totalDue - loanTerm.totalRepayment;
-
-        require(
-            $.token.transferFrom(msg.sender, address(this), remainingAmount),
-            "Loan repay: Unable to transfer repayment amount"
-        );
-
-        loanTerm.totalRepayment = totalDue;
-        loanTerm.yield = totalDue - loanTerm.principal;
-        loanTerm.state = LoanModel.LoanState.Repaid;
-        $.fundedLoanIndex.archive(loanTermHash);
-
-        emit LoanRepaid(loanTermHash, msg.sender, loanTerm.lender, remainingAmount, loanTerm.state);
+        uint256 remainingAmount = loanTerm.repaymentDue - loanTerm.totalRepayment;
+        require(repayAmount <= remainingAmount, "Repay amount exceeds remaining amount");
+        require(erc20.transferFrom(msg.sender, loanTerm.lender, repayAmount), "Loan: Transfer failed");
+        if(block.timestamp > loanTerm.repaymentDeadline) {
+            emit LoanLateRepayment(loanTermHash, loanTerm.borrower);
+        }
+        loanTerm.totalRepayment += repayAmount;
+        if (loanTerm.totalRepayment == loanTerm.repaymentDue) {
+            loanTerm.state = LoanModel.LoanState.Repaid;
+            $.fundedLoanIndex.archive(loanTermHash);
+            emit LoanRepaid(loanTermHash, loanTerm.borrower, remainingAmount);
+        }
     }
 
-    function checkExpiredLoans() external {
+    function checkExpiredLoans() public {
         LoanStorage storage $ = _getLoanStorage();
-        uint256 currentBlock = block.timestamp;
+        uint256 currentTimestamp = block.timestamp;
         
         for (uint256 i = $.fundedLoanIndex.firstIdx; i < $.fundedLoanIndex.nextIdx; i++) {
             bytes32 loanHash = $.fundedLoanIndex.get(i);
             LoanModel.LoanTerm storage loanTerm = $.loanTermStorage[loanHash];
             
-            if (loanTerm.state == LoanModel.LoanState.Funded && currentBlock > loanTerm.repaymentDeadline) {
+            if (loanTerm.state == LoanModel.LoanState.Funded && currentTimestamp > loanTerm.repaymentDeadline + LOAN_EXPIRED_TIME) {
                 loanTerm.state = LoanModel.LoanState.Expired;
                 $.fundedLoanIndex.archive(loanHash);
-                emit LoanExpired(loanHash, loanTerm.repaymentDeadline, currentBlock);
+                emit LoanExpired(loanHash, loanTerm.borrower);
             }
         }
     }
