@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import "@gluwa/universal-smart-contract/contracts/abstract/Types.sol";
-import {DecodeRLP} from "@gluwa/universal-smart-contract/contracts/abstract/DecodeRLP.sol";
+import "@gluwa/creditcoin-public-prover/contracts/sol/Types.sol";
+import {DecodeRLP} from "./abstract/DecodeRLP.sol";
 
 import {Initializable, AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {UniversalBridgeProxy} from "./UniversalBridgeProxy.sol";

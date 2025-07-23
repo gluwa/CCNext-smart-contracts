@@ -1,16 +1,22 @@
 const { ethers, upgrades } = require('hardhat');
+const fs = require('fs');
+const path = require('path');
+
+// const ERC20Name = "Test";
+// const ERC20Symbol = "TEST";
+
 async function deployUSC(
     proceedsAccount,
-    costPerByte,
-    baseFee,
+    ERC20Name,
+    ERC20Symbol,
     chainKey,
-    displayName,
     timeout,
     lockupDuration,
     approvalThreshold,
     maxInstantMint,
     admin
 ) {
+    console.log(ERC20Name, ERC20Symbol, chainKey, timeout, lockupDuration, approvalThreshold, maxInstantMint, admin);
     if (!ethers.isAddress(admin) || !ethers.isAddress(proceedsAccount)) {
         console.error('admin and proceedsAccount must be correct address');
         process.exit(1);
@@ -22,16 +28,9 @@ async function deployUSC(
     }
 
     const [owner] = await ethers.getSigners();
-    const proverFactory = await ethers.getContractFactory('CreditcoinPublicProver');
-    const prover = await proverFactory.deploy(
-        proceedsAccount,
-        costPerByte,
-        baseFee,
-        chainKey,
-        displayName,
-        timeout
-    );
-    await prover.waitForDeployment();
+    const erc20Contract = await ethers.getContractFactory("ERC20Mintable");
+    const erc20 = await erc20Contract.deploy(ERC20Name, ERC20Symbol);
+    await erc20.waitForDeployment();
 
     const proxyFactory = await ethers.getContractFactory('UniversalBridgeProxy');
     const proxy = await upgrades.deployProxy(proxyFactory, [
@@ -41,8 +40,20 @@ async function deployUSC(
         [admin],
     ]);
     await proxy.waitForDeployment();
-    console.log('Prover deployed to:', prover.target);
+    console.log('ERC20 deployed to:', erc20.target);
     console.log('UniversalBridgeProxy deployed to:', proxy.target);
+    await erc20.grantRole(await erc20.DEFAULT_ADMIN_ROLE(), proxy.target);
+    renameKovan();
 }
 
+function renameKovan(){
+    const openZeppelinDir = path.join(process.cwd(), '.openzeppelin');
+    const kovanPath = path.join(openZeppelinDir, 'kovan.json');
+    const ccnextDevnetPath = path.join(openZeppelinDir, 'ccnext_devnet.json');
+    if (fs.existsSync(kovanPath)) {
+        const kovanContent = fs.readFileSync(kovanPath, 'utf8');
+        fs.writeFileSync(ccnextDevnetPath, kovanContent);
+        fs.unlinkSync(kovanPath);
+    }
+}
 module.exports = { deployUSC };
