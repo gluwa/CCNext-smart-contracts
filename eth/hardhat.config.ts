@@ -143,14 +143,13 @@ task(
 
 
 // Example Usage: 
-// npx hardhat deploy --network cc_devnet --proceedsaccount 0x2a7124FA2e830E85741761d9A9F4DE6455b049c7 --costperbyte 10 --basefee 100 --chainkey 42 --displayname "My Contract" --timeout 300 --lockupduration 86400 --approvalthreshold 2 --maxinstantmint 10 --admin 0x2a7124FA2e830E85741761d9A9F4DE6455b049c7
+// npx hardhat deploy --network cc_devnet --proceedsaccount 0x2a7124FA2e830E85741761d9A9F4DE6455b049c7 --erc20name Test --erc20symbol TEST --chainkey 42 --timeout 300 --lockupduration 86400 --approvalthreshold 2 --maxinstantmint 10 --admin 0x2a7124FA2e830E85741761d9A9F4DE6455b049c7
 // [OPTIONAL for verification process] npx hardhat verify --network cc_devnet  0x0E79C7bC5b92cB86bA635522D2238A1D79E67d84 0x2a7124FA2e830E85741761d9A9F4DE6455b049c7 10 100 42 "My Contract" 300
 task("deploy", "Deploys the contract with constructor args")
   .addParam("proceedsaccount", "The proceeds account address")
-  .addParam("costperbyte", "Cost per byte", undefined, undefined, true)
-  .addParam("basefee", "Base fee")
+  .addParam("erc20name", "Name of the ERC20 token")
+  .addParam("erc20symbol", "Symbol of the ERC20 token")
   .addParam("chainkey", "Chain key")
-  .addParam("displayname", "Display name")
   .addParam("timeout", "Timeout")
   .addParam("lockupduration", "Lockup duration ")
   .addParam("approvalthreshold", "Approval threshold ")
@@ -163,10 +162,9 @@ task("deploy", "Deploys the contract with constructor args")
 
     await deployUSC(
       taskArgs.proceedsaccount,
-      taskArgs.costperbyte,
-      taskArgs.basefee,
+      taskArgs.erc20name,
+      taskArgs.erc20symbol,
       taskArgs.chainkey,
-      taskArgs.displayname,
       taskArgs.timeout,
       taskArgs.lockupduration,
       taskArgs.approvalthreshold,
