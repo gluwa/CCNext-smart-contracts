@@ -2,15 +2,15 @@
   "manifestVersion": "3.2",
   "proxies": [
     {
-      "address": "0x4a88E88610d8bBEB44E8dD515b30e5937a56C690",
-      "txHash": "0xfdeda51fc3a34220b79ca6c5136e6b1062c76861ce30f9a2e005b6362820614a",
+      "address": "0xFf4722F339BB4dB4De45322a6D41Bcc315Df858d",
+      "txHash": "0x404ef11b2d3c14b25644b719a34eb019368b6ae95fe635b6a124451fbca0c996",
       "kind": "transparent"
     }
   ],
   "impls": {
     "54177a2a1af9128be6d4938e7a4f51b31e99e86782bb988dc04d80c0e9b51307": {
-      "address": "0xAe8ca093189AAe70F0c4c7a84271Dc17381fb284",
-      "txHash": "0x9b9ab41c6eeaad78b2b01b06aecb472f6de55cb1715d2b3f0c8567b0402cbbea",
+      "address": "0xf00434468C321Fa7934eca6B51826e7f6C48540e",
+      "txHash": "0x9094566a70f4e016570adb5ef56cdcd658ff27f4a3e6ad25f0c96252ec44574a",
       "layout": {
         "solcVersion": "0.8.24",
         "storage": [],
@@ -31,23 +31,23 @@
             "label": "mapping(address => bool)",
             "numberOfBytes": "32"
           },
-          "t_mapping(t_bytes32,t_struct(RoleData)336_storage)": {
+          "t_mapping(t_bytes32,t_struct(RoleData)433_storage)": {
             "label": "mapping(bytes32 => struct AccessControlUpgradeable.RoleData)",
             "numberOfBytes": "32"
           },
-          "t_struct(AccessControlStorage)346_storage": {
+          "t_struct(AccessControlStorage)443_storage": {
             "label": "struct AccessControlUpgradeable.AccessControlStorage",
             "members": [
               {
                 "label": "_roles",
-                "type": "t_mapping(t_bytes32,t_struct(RoleData)336_storage)",
+                "type": "t_mapping(t_bytes32,t_struct(RoleData)433_storage)",
                 "offset": 0,
                 "slot": "0"
               }
             ],
             "numberOfBytes": "32"
           },
-          "t_struct(InitializableStorage)457_storage": {
+          "t_struct(InitializableStorage)554_storage": {
             "label": "struct Initializable.InitializableStorage",
             "members": [
               {
@@ -65,7 +65,7 @@
             ],
             "numberOfBytes": "32"
           },
-          "t_struct(RoleData)336_storage": {
+          "t_struct(RoleData)433_storage": {
             "label": "struct AccessControlUpgradeable.RoleData",
             "members": [
               {
@@ -93,8 +93,8 @@
             {
               "contract": "AccessControlUpgradeable",
               "label": "_roles",
-              "type": "t_mapping(t_bytes32,t_struct(RoleData)336_storage)",
-              "src": "@openzeppelin\\contracts-upgradeable\\access\\AccessControlUpgradeable.sol:61",
+              "type": "t_mapping(t_bytes32,t_struct(RoleData)433_storage)",
+              "src": "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol:61",
               "offset": 0,
               "slot": "0"
             }
@@ -104,7 +104,7 @@
               "contract": "Initializable",
               "label": "_initialized",
               "type": "t_uint64",
-              "src": "@openzeppelin\\contracts-upgradeable\\proxy\\utils\\Initializable.sol:69",
+              "src": "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol:69",
               "offset": 0,
               "slot": "0"
             },
@@ -112,7 +112,7 @@
               "contract": "Initializable",
               "label": "_initializing",
               "type": "t_bool",
-              "src": "@openzeppelin\\contracts-upgradeable\\proxy\\utils\\Initializable.sol:73",
+              "src": "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol:73",
               "offset": 8,
               "slot": "0"
             }

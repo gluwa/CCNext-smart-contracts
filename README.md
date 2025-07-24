@@ -30,5 +30,7 @@ npx hardhat compile
 TODO: Once testnet is live, change this target network to ccnext_testnet and add as option in hardhat.config.ts
 Deploy at target network as `ccnext_devnet`
 ```shell
-npx hardhat deploy --network ccnext_devnet --proceedsaccount <your_ccnext_account_public_key> --costperbyte 10 --basefee 100 --chainkey 42 --displayname "My Contract" --timeout 300 --lockupduration 86400 --approvalthreshold 2 --maxinstantmint 100 --admin <your_ccnext_account_public_key>
+npx hardhat deploy --network ccnext_devnet --proceedsaccount <your_ccnext_account_public_key> --erc20name Test --erc20symbol TEST --chainkey 42 --timeout 300 --lockupduration 86400 --approvalthreshold 2 --maxinstantmint 100 --admin <your_ccnext_account_public_key>
 ```
+
+Devnet testing public key: 0x3Cd0A705a2DC65e5b1E1205896BaA2be8A07c6e0
