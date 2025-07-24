@@ -672,6 +672,11 @@
   resolved "https://registry.npmjs.org/@fastify/busboy/-/busboy-2.1.1.tgz"
   integrity sha512-vBZP4NlzfOlerQTnba4aqZoMhE/a9HY7HRqoOPaETQcSQuWEIyZMHGfVu6w9wGtGK5fED5qRs2DteVCjOH60sA==
 
+"@gluwa/creditcoin-public-prover@^0.1.0":
+  version "0.1.0"
+  resolved "https://registry.npmjs.org/@gluwa/creditcoin-public-prover/-/creditcoin-public-prover-0.1.0.tgz"
+  integrity sha512-wPV5wQMDZS+HbYiHT75ksHQ9YlEAwJwr1Ad3NFFBuKlpcOyQ6HBf2C0iVip6ppWxYIrXa1bYmdfjWX1cLiJlYA==
+
 "@gluwa/universal-smart-contract@^0.1.0":
   version "0.1.0"
   resolved "https://registry.npmjs.org/@gluwa/universal-smart-contract/-/universal-smart-contract-0.1.0.tgz"
