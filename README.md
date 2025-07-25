@@ -5,8 +5,7 @@ This repository hosts templates for smart contracts which integrate with the dec
 
 ## 1. Install node package
 ```shell
-cd eth
-npm i
+yarn
 ```
 
 ## 2. Fund an Address on Your Target CCNext Network
@@ -15,7 +14,7 @@ If you're launching contracts as part of a tutorial from `ccnext-testnet-bridge-
 For CCNext Testnet use step 2 [here](https://github.com/gluwa/ccnext-testnet-bridge-examples/blob/main/hello-bridge/README.md)
 
 ## 3. Create .env File
-For initial setup, you need to create a .env file in your `/eth` directory.
+For initial setup, you need to create a .env file in the top level directory of this repository.
 You then need to add the following contents:
 ```
 OWNER_PRIVATE_KEY=your_ccnext_account_private_key_here
@@ -32,5 +31,6 @@ Deploy at target network as `ccnext_devnet`
 ```shell
 npx hardhat deploy --network ccnext_devnet --proceedsaccount <your_ccnext_account_public_key> --erc20name Test --erc20symbol TEST --chainkey 42 --timeout 300 --lockupduration 86400 --approvalthreshold 2 --maxinstantmint 100 --admin <your_ccnext_account_public_key>
 ```
+Sometimes deploy.js hangs due to a timeout. If the script doesn't complete on your first try, then attempt re-running it.
 
 Devnet testing public key: 0x3Cd0A705a2DC65e5b1E1205896BaA2be8A07c6e0

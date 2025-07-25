@@ -13,6 +13,7 @@
 **/cache/
 **/typechain-types/
 **/ignition/deployments/
+**/artifacts
 
 # temp, output & test files
 **/*output.txt
@@ -20,3 +21,9 @@
 **/*trace.json
 **/*memory.json
 common/eth/.openzeppelin/unknown-*.json
+
+node_modules
+.env
+coverage
+coverage.json
+typechain
