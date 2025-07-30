@@ -33,10 +33,10 @@ contract UniversalBridgeProxy is
     );
 
     // keccak256(abi.encode(uint256(keccak256("usc.storage.prover")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant ProverStorageLocation =
+    bytes32 private constant ProxyStorageLocation =
         0xf5c2b13d5d6ee9861927a008fb55acc9714edb6cfe1604df008b8bdc9d539100;
 
-    struct ProverStorage {
+    struct ProxyStorage {
         uint64 lockupDuration;
         uint64 approvalThreshold;
         uint128 maxInstantMint;
@@ -44,13 +44,13 @@ contract UniversalBridgeProxy is
         mapping(address => mapping(bytes32 => LockedQuery)) lockedQueries;
     }
 
-    function _getProverStorage()
+    function _getProxyStorage()
         private
         pure
-        returns (ProverStorage storage $)
+        returns (ProxyStorage storage $)
     {
         assembly {
-            $.slot := ProverStorageLocation
+            $.slot := ProxyStorageLocation
         }
     }
 
@@ -65,7 +65,7 @@ contract UniversalBridgeProxy is
         uint128 maxInstantMint_,
         address[] calldata admins
     ) external initializer {
-        ProverStorage storage $ = _getProverStorage();
+        ProxyStorage storage $ = _getProxyStorage();
         $.maxInstantMint = maxInstantMint_;
         $.lockupDuration = lockupDuration_;
         $.approvalThreshold = approvalThreshold_;
@@ -79,35 +79,35 @@ contract UniversalBridgeProxy is
     }
 
     function lockupDuration() public view virtual returns (uint64) {
-        return _getProverStorage().lockupDuration;
+        return _getProxyStorage().lockupDuration;
     }
 
     function setlockupDuration(
         uint64 lockupDuration_
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        ProverStorage storage $ = _getProverStorage();
+        ProxyStorage storage $ = _getProxyStorage();
         $.lockupDuration = lockupDuration_;
     }
 
     function approvalThreshold() public view returns (uint64) {
-        return _getProverStorage().approvalThreshold;
+        return _getProxyStorage().approvalThreshold;
     }
 
     function setApprovalThreshold(
         uint64 threshold
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        ProverStorage storage $ = _getProverStorage();
+        ProxyStorage storage $ = _getProxyStorage();
         $.approvalThreshold = threshold;
     }
 
     function maxInstantMint() public view returns (uint128) {
-        return _getProverStorage().maxInstantMint;
+        return _getProxyStorage().maxInstantMint;
     }
 
     function setMaxInstantMint(
         uint128 maxMint
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        ProverStorage storage $ = _getProverStorage();
+        ProxyStorage storage $ = _getProxyStorage();
         $.maxInstantMint = maxMint;
     }
 
@@ -115,14 +115,14 @@ contract UniversalBridgeProxy is
         address user,
         bytes32 queryId
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _getProverStorage().usedQueryId[user][queryId] = true;
+        _getProxyStorage().usedQueryId[user][queryId] = true;
     }
 
     function isQueryUsed(
         address user,
         bytes32 queryId
     ) external view returns (bool) {
-        return _getProverStorage().usedQueryId[user][queryId];
+        return _getProxyStorage().usedQueryId[user][queryId];
     }
 
     function lockQuery(
@@ -131,7 +131,7 @@ contract UniversalBridgeProxy is
         uint256 amount,
         uint64 unlockTime
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        ProverStorage storage $ = _getProverStorage();
+        ProxyStorage storage $ = _getProxyStorage();
         $.lockedQueries[user][queryId].amount = amount;
         $.lockedQueries[user][queryId].unlockTime = unlockTime;
     }
@@ -140,7 +140,7 @@ contract UniversalBridgeProxy is
         address user,
         bytes32 queryId
     ) external view returns (uint256, uint256) {
-        LockedQuery storage query = _getProverStorage().lockedQueries[user][
+        LockedQuery storage query = _getProxyStorage().lockedQueries[user][
             queryId
         ];
         return (query.amount, query.unlockTime);
@@ -161,7 +161,7 @@ contract UniversalBridgeProxy is
         bytes32 queryId,
         address ERC20Address
     ) external {
-        ProverStorage storage $ = _getProverStorage();
+        ProxyStorage storage $ = _getProxyStorage();
         require(
             !$.usedQueryId[proverContractAddr][queryId],
             "QueryId already used"
@@ -237,7 +237,7 @@ contract UniversalBridgeProxy is
         address proverContractAddr,
         bytes32 queryId
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        LockedQuery storage lockedQuery = _getProverStorage().lockedQueries[
+        LockedQuery storage lockedQuery = _getProxyStorage().lockedQueries[
             proverContractAddr
         ][queryId];
         require(lockedQuery.unlockTime > 0, "Query is not locked");
@@ -256,7 +256,7 @@ contract UniversalBridgeProxy is
         address proverContractAddr,
         bytes32 queryId
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        ProverStorage storage $ = _getProverStorage();
+        ProxyStorage storage $ = _getProxyStorage();
         LockedQuery storage lockedQuery = $.lockedQueries[proverContractAddr][
             queryId
         ];
@@ -285,7 +285,7 @@ contract UniversalBridgeProxy is
         bytes32 queryId
     ) internal {
         IERC20Mintable token = IERC20Mintable(ERC20Address);
-        ProverStorage storage $ = _getProverStorage();
+        ProxyStorage storage $ = _getProxyStorage();
         require(
             !$.usedQueryId[ERC20Address][queryId],
             "Query is already processed"
