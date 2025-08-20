@@ -26,11 +26,8 @@ npx hardhat compile
 ```
 
 ## 5. Run script to deploy contracts
-TODO: Once testnet is live, change this target network to ccnext_testnet and add as option in hardhat.config.ts
-Deploy at target network as `ccnext_devnet`
+Deploy at target network as `ccnext_testnet`
 ```shell
-npx hardhat deploy --network ccnext_devnet --proceedsaccount <your_ccnext_account_public_key> --erc20name Test --erc20symbol TEST --chainkey 42 --timeout 300 --lockupduration 86400 --approvalthreshold 2 --maxinstantmint 100 --admin <your_ccnext_account_public_key>
+npx hardhat deploy --network ccnext_testnet --proceedsaccount <your_ccnext_account_public_key> --erc20name Test --erc20symbol TEST --chainkey 42 --timeout 300 --lockupduration 86400 --approvalthreshold 2 --maxinstantmint 100 --admin <your_ccnext_account_public_key>
 ```
-Sometimes deploy.js hangs due to a timeout. If the script doesn't complete on your first try, then attempt re-running it.
-
-Devnet testing public key: 0x3Cd0A705a2DC65e5b1E1205896BaA2be8A07c6e0
+Sometimes deploy.js can be flaky for various reasons. Try re-running it a few times if it gets stuck or fails.

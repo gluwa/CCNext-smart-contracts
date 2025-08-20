@@ -5,6 +5,7 @@ import {Initializable, AccessControlUpgradeable} from "@openzeppelin/contracts-u
 import {IERC20Mintable} from "./abstract/ERC20Mintable.sol";
 import {ICreditcoinPublicProver} from "@gluwa/creditcoin-public-prover/contracts/sol/Prover.sol";
 import {DecodeRLP} from "./abstract/DecodeRLP.sol";
+
 contract UniversalBridgeProxy is
     Initializable,
     AccessControlUpgradeable,
@@ -44,11 +45,7 @@ contract UniversalBridgeProxy is
         mapping(address => mapping(bytes32 => LockedQuery)) lockedQueries;
     }
 
-    function _getProxyStorage()
-        private
-        pure
-        returns (ProxyStorage storage $)
-    {
+    function _getProxyStorage() private pure returns (ProxyStorage storage $) {
         assembly {
             $.slot := ProxyStorageLocation
         }
