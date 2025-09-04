@@ -28,6 +28,6 @@ npx hardhat compile
 ## 5. Run script to deploy contracts
 Deploy at target network as `ccnext_testnet`
 ```shell
-npx hardhat deploy --network ccnext_testnet --proceedsaccount <your_credticoin_account_public_key> --erc20name Test --erc20symbol TEST --chainkey 42 --timeout 300 --lockupduration 86400 --approvalthreshold 2 --maxinstantmint 100 --admin <your_creditcoin_account_public_key>
+npx hardhat deploy --network ccnext_testnet --proceedsaccount <your_credticoin_account_public_key> --erc20name Test --erc20symbol TEST --chainkey 102033 --timeout 300 --lockupduration 86400 --approvalthreshold 2 --maxinstantmint 100 --admin <your_creditcoin_account_public_key>
 ```
 Sometimes deploy.js can be flaky for various reasons. Try re-running it a few times if it gets stuck or fails.

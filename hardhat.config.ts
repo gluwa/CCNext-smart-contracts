@@ -48,7 +48,7 @@ const config: HardhatUserConfig = {
     ,
     ccnext_testnet: {
       url: "https://rpc.ccnext-testnet.creditcoin.network",
-      chainId: 42,
+      chainId: 102033,
       accounts: [`${DEFAULT_OWNER}`],
       timeout: 360000, // increase timeout  6 minutes
     }
