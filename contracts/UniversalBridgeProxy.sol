@@ -8,8 +8,7 @@ import {DecodeRLP} from "./abstract/DecodeRLP.sol";
 
 contract UniversalBridgeProxy is
     Initializable,
-    AccessControlUpgradeable,
-    DecodeRLP
+    AccessControlUpgradeable    
 {
     struct LockedQuery {
         uint64 approvals;
@@ -182,12 +181,12 @@ contract UniversalBridgeProxy is
         require(hasRole(DEFAULT_ADMIN_ROLE, queryDetails.principal));
 
         // Result segment availability validated on prover side
-        ResultSegment[] memory resultSegments = queryDetails.resultSegments;
+       ResultSegment[] memory resultSegments = queryDetails.resultSegments;
         // Result segments for default ERC20 Transfer correspond to these fields:
         // 0: Rx - Status
         // 1: Tx - From
         // 2: Tx - To (contract addr)
-        // 3: Event - Addr (contract emitting event)
+        // 3: Event - Addr (contract emitting event) 
         // 4: Event - Signature
         // 5: Event - from (address which burned ERC20)
         // 6: Event - to (burn address receiving ERC20)
