@@ -84,5 +84,8 @@ npx hardhat deploy                                     \
 > gets stuck or fails.
 
 [Universal Bridge Proxy contract]: ./contracts/UniversalBridgeProxy.sol
+[yarn]: https://yarnpkg.com/getting-started/install
+[npm]: https://docs.npmjs.com/downloading-and-installing-node-js-and-npm
+[enable flakes]: https://nixos.wiki/wiki/flakes#Enable_flakes_temporarily
 [🚰 creditcoin discord faucet]: https://discord.com/channels/762302877518528522/1407843256636539000
 [👷🏻‍♀️ hardhat]: https://hardhat.org/
