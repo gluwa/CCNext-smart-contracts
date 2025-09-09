@@ -40,11 +40,9 @@ enough funds you can move on to deploying your contracts.
 ### 1. Configure your `.env`
 
 > [!CAUTION]
-> To deploy contracts, you must give the hardhat deployment script access to a funded private key 
-> capable of submitting a transaction. _This for development purposes only_. Extreme caution is 
-> advised when using private keys in any scenario. When possible place a small amount of funds in a
-> temporary account and use the private key of that account rather than your main key. **Never share
-> your private key, it can be used to steal your funds!**
+> The hardhat script for deploying smart contracts requires use of your wallet's private key in order
+> to act on your wallet's behalf. Exposing a private key for any reason is dangerous, so make sure the 
+> wallet you use contains nothing of value. Ideally it should be a newly created address.
 
 You will need to create a `.env` file at the root of this repository file tree with some configuration
 options for the contracts to use during deployment. Add the following contents:
