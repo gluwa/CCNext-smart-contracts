@@ -67,7 +67,7 @@ command:
 
 ```bash
 npx hardhat deploy                                     \
-    --network ccnext_testnet                           \
+    --network cc3_usc_testnet                           \
     --proceedsaccount <Your Creditcoin wallet address> \
     --erc20name Test                                   \
     --erc20symbol TEST                                 \
