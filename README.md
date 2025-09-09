@@ -28,9 +28,9 @@ Once you have all your dependencies setup, you will need to download some packag
 yarn install
 ```
 
-## Get some test funds on Creditcoin
+## Get some test funds on Creditcoin USC Testnet
 
-Before you can deploy your own contracts, you will need to fund your account on the Creditcoin
+Before you can deploy your own contracts, you will need to fund your account on the Creditcoin USC
 Testnet, otherwise contract deployment will fail due to lack of funds. Head over to the
 [🚰 creditcoin discord faucet] to request some test tokens there. Now that you have enough funds
 you can move on to deploying your contracts.
@@ -87,5 +87,5 @@ npx hardhat deploy                                     \
 [yarn]: https://yarnpkg.com/getting-started/install
 [npm]: https://docs.npmjs.com/downloading-and-installing-node-js-and-npm
 [enable flakes]: https://nixos.wiki/wiki/flakes#Enable_flakes_temporarily
-[🚰 creditcoin discord faucet]: https://discord.com/channels/762302877518528522/1407843256636539000
+[🚰 creditcoin usc testnet discord faucet]: https://discord.com/channels/762302877518528522/1407843256636539000
 [👷🏻‍♀️ hardhat]: https://hardhat.org/
