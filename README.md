@@ -87,5 +87,5 @@ npx hardhat deploy                                     \
 [yarn]: https://yarnpkg.com/getting-started/install
 [npm]: https://docs.npmjs.com/downloading-and-installing-node-js-and-npm
 [enable flakes]: https://nixos.wiki/wiki/flakes#Enable_flakes_temporarily
-[🚰 creditcoin usc testnet discord faucet]: https://discord.com/channels/762302877518528522/1407843256636539000
+[🚰 creditcoin usc testnet discord faucet]: https://discord.com/channels/762302877518528522/1414985542235459707
 [👷🏻‍♀️ hardhat]: https://hardhat.org/
