@@ -1,9 +1,9 @@
 # 🧾 CCNext-smart-contracts 🧾
 
-This repository hosts smart contract templates which integrate with the Creditcoin `Universal 
-Smart Contracts` update. Most important of these is the [Universal Bridge Proxy contract], which can
-be used to interpret bridged data from foreign _source chains_ (EX: `Ethereum`) on behalf of other
-Creditcoin `EVM` smart contracts.
+This repository hosts smart contract templates which integrate with the Creditcoin `Universal Smart
+Contracts` project, code named `CCNext`. Most important of these is the [Universal Bridge Proxy 
+contract], which can be used to interpret bridged data from foreign _source chains_ (EX: `Ethereum`)
+on behalf of other Creditcoin `EVM` smart contracts.
 
 ## External dependencies
 
@@ -32,17 +32,19 @@ yarn install
 
 Before you can deploy your own contracts, you will need to fund your account on the Creditcoin USC
 Testnet, otherwise contract deployment will fail due to lack of funds. Head over to the
-[🚰 creditcoin discord faucet] to request some test tokens there. Now that you have enough funds
-you can move on to deploying your contracts.
+[🚰 creditcoin usc testnet discord faucet] to request some test tokens there. Now that you have 
+enough funds you can move on to deploying your contracts.
 
 ## Deploying contracts
 
 ### 1. Configure your `.env`
 
 > [!CAUTION]
-> To deploy contracts, you must give the hardhat deployment script access to a funded private key capable of submitting a transaction. _This for development purposes
-> only_. Extreme caution is advised when using private keys in any scenario. When possible place a small amount of funds in a temporary account and use the private key of that account rather than your main key. **Never share your private key, it can be
-> used to steal your funds!**
+> To deploy contracts, you must give the hardhat deployment script access to a funded private key 
+> capable of submitting a transaction. _This for development purposes only_. Extreme caution is 
+> advised when using private keys in any scenario. When possible place a small amount of funds in a
+> temporary account and use the private key of that account rather than your main key. **Never share
+> your private key, it can be used to steal your funds!**
 
 You will need to create a `.env` file at the root of this repository file tree with some configuration
 options for the contracts to use during deployment. Add the following contents:
