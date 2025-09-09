@@ -11,43 +11,8 @@ const DEFAULT_OWNER = process.env.OWNER_PRIVATE_KEY;
 // Hardhat configuration
 const config: HardhatUserConfig = {
   networks: {
-    hardhat: {
-      initialBaseFeePerGas: 1,
-      allowUnlimitedContractSize: true,
-      accounts: {
-        mnemonic:
-          "want tennis tennis galaxy myth obey town patrol heavy innocent consider drill"
-      }
-    },
-    localhost: {
-      url: "http://localhost:9933", // Fixed the missing slash in URL
-      accounts: {
-        mnemonic:
-          "want tennis tennis galaxy myth obey town patrol heavy innocent consider drill"
-      }
-    },
-    cc3_testnet: {
-      url: "https://rpc.cc3-testnet.creditcoin.network",
-      chainId: 102031,
-      accounts: [`${DEFAULT_OWNER}`],
-      gasPrice: 20000000000
-    }
-    ,
-    cc_devnet: {
-      url: "https://rpc.cc3-devnet.creditcoin.network",
-      chainId: 102032,
-      accounts: [`${DEFAULT_OWNER}`]
-    }
-    ,
-    ccnext_devnet: {
-      url: "https://rpc.ccnext-devnet.creditcoin.network",
-      chainId: 42,
-      accounts: [`${DEFAULT_OWNER}`],
-      timeout: 360000, // increase timeout  6 minutes
-    }
-    ,
-    ccnext_testnet: {
-      url: "https://rpc.ccnext-testnet.creditcoin.network",
+    cc3_usc_testnet: {
+      url: "https://rpc.usc-testnet.creditcoin.network",
       chainId: 102033,
       accounts: [`${DEFAULT_OWNER}`],
       timeout: 360000, // increase timeout  6 minutes
@@ -77,40 +42,6 @@ const config: HardhatUserConfig = {
             runs: 200
           },
           viaIR: true
-        }
-      }
-    ]
-  },
-  etherscan: {
-    apiKey: {
-      cc3: `${process.env.BLOCKSCOUT_API_KEY}`,
-      cc3_testnet: `${process.env.BLOCKSCOUT_API_KEY_TESTNET}`,
-      cc_devnet: `${process.env.BLOCKSCOUT_API_KEY_DEVNET}`
-    },
-    customChains: [
-      {
-        network: "cc3",
-        chainId: 102030,
-        urls: {
-          apiURL: "https://creditcoin.blockscout.com/api",
-          browserURL: "https://creditcoin.blockscout.com"
-        }
-      },
-      {
-        network: "cc3_testnet",
-        chainId: 102031,
-        urls: {
-          apiURL: "https://creditcoin-testnet.blockscout.com/api",
-          browserURL: "https://creditcoin-testnet.blockscout.com"
-        }
-      }
-      ,
-      {
-        network: "cc_devnet",
-        chainId: 102032,
-        urls: {
-          apiURL: "https://creditcoin-devnet.blockscout.com/api",
-          browserURL: "https://creditcoin-devnet.blockscout.com/api"
         }
       }
     ]
