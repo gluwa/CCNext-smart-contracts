@@ -37,7 +37,7 @@ async function main() {
 
     let tx_with_raw = await getTransactionWithRaw(provider, txHash);
     if (!tx_with_raw) {
-        const tx = await provider.getTransaction(tx_hash_str);
+        const tx = await provider.getTransaction(txHash);
         if (!tx) {
             console.error('Transaction not found');
             return;
