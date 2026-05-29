@@ -52,13 +52,14 @@ abstract contract UniversalSmartContract_Core  {
         uint256 resultLength = resultSegments.length;
         eventSegments = new ResultSegment[](resultLength - 5);
         for (uint256 i = 5; i < resultLength;) {
-            eventSegments[i] = resultSegments[i];
+            eventSegments[i - 5] = resultSegments[i];
             unchecked {
                 ++i;
             }
         }       
 
-        // Hook validation logic for implementation contract to use 
+        // Hook validation logic for the implementation contract to use 
+        $.usedQueryId[proverContractAddr][queryId] = true;
         _onQueryValidated(queryId, functionSignature, eventSegments);
     }
 
