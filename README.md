@@ -4,6 +4,7 @@ This repository hosts smart contract templates which integrate with the Creditco
 Contracts` project, code named `CCNext`. Most important of these is the [Universal Bridge Proxy 
 contract], which can be used to interpret bridged data from foreign _source chains_ (EX: `Ethereum`)
 on behalf of other Creditcoin `EVM` smart contracts.
+⚠️ Note: These contracts are provided as examples only and are not production-ready. They are intended for learning and reference purposes. Do not deploy them to a production environment without thorough review, testing, and auditing.
 
 ## External dependencies
 
