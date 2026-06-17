@@ -1,5 +1,12 @@
 {
   "name": "hardhat-project",
+  "scripts": {
+    "loan_readability:deploy:source": "hardhat run scripts/loan-readability/deploy.ts --network sepolia",
+    "loan_readability:deploy:cc3": "hardhat run scripts/loan-readability/deploy.ts --network cc3_testnet",
+    "loan_readability:source": "hardhat run scripts/loan-readability/1_sourceLoanExecution.ts --network sepolia",
+    "loan_readability:setup": "hardhat run scripts/loan-readability/setup_readability.ts --network cc3_testnet",
+    "loan_readability:cc3": "hardhat run scripts/loan-readability/2_cc3ReadabilityExecution.ts --network cc3_testnet"
+  },
   "devDependencies": {
     "@ethereumjs/common": "^4.4.0",
     "@ethereumjs/tx": "^5.4.0",

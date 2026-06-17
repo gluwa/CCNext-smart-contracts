@@ -7,6 +7,8 @@ import * as dotenv from "dotenv";
 dotenv.config({ path: ".env" });
 
 const DEFAULT_OWNER = process.env.OWNER_PRIVATE_KEY;
+const SEPOLIA_RPC = process.env.SEPOLIA_RPC_URL ?? "https://sepolia-proxy-rpc.creditcoin.network";
+const SOURCE_PRIVATE_KEY = process.env.SOURCE_WALLET_PRIVATE_KEY ?? DEFAULT_OWNER;
 
 // Hardhat configuration
 const config: HardhatUserConfig = {
@@ -14,8 +16,19 @@ const config: HardhatUserConfig = {
     cc3_usc_testnet: {
       url: "https://rpc.usc-testnet.creditcoin.network",
       chainId: 102033,
-      accounts: [`${DEFAULT_OWNER}`],
+      accounts: DEFAULT_OWNER ? [`${DEFAULT_OWNER}`] : [],
       timeout: 360000, // increase timeout  6 minutes
+    },
+    cc3_testnet: {
+      url: "https://rpc.cc3-testnet.creditcoin.network",
+      chainId: 102031,
+      accounts: DEFAULT_OWNER ? [`${DEFAULT_OWNER}`] : [],
+      timeout: 360000,
+    },
+    sepolia: {
+      url: SEPOLIA_RPC,
+      chainId: 11155111,
+      accounts: SOURCE_PRIVATE_KEY ? [`${SOURCE_PRIVATE_KEY}`] : [],
     }
   },
   mocha: {
