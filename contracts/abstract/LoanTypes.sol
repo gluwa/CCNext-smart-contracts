@@ -19,7 +19,7 @@ struct LoanTerms {
     uint256 loanAmount;
     uint256 interestRate;
     uint256 expectedRepaymentAmount;
-    uint256 deadlineBlockNumber;
+    uint256 deadlineTimestamp;
 }
 
 struct LoanOrder {

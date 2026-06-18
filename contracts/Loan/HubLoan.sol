@@ -19,15 +19,13 @@ contract HubLoan is AccessControl, ReentrancyGuard, ILoanReadabilityTarget {
     mapping(uint256 => LoanOrder) public loanOrders;
     mapping(uint256 => bool) public registeredLoans;
 
-    uint256 public nextLoanId;
-
     event LoanRegistered(
         uint256 indexed loanId,
         address indexed lender,
         address indexed borrower,
         uint256 loanAmount,
         uint256 repayAmount,
-        uint256 deadlineBlockNumber
+        uint256 deadlineTimestamp
     );
     event LoanFunded(uint256 indexed loanId);
     event LoanPartiallyRepaid(uint256 indexed loanId, uint256 amount);
@@ -35,31 +33,33 @@ contract HubLoan is AccessControl, ReentrancyGuard, ILoanReadabilityTarget {
     event LoanExpired(uint256 indexed loanId);
 
     error LoanNotRegistered(uint256 loanId);
+    error LoanAlreadyRegistered(uint256 loanId);
     error InvalidLoanAmount();
     error DeadlineMustBeInFuture();
     error RepaymentBelowLoanAmount();
     error InvalidLenderSignature();
     error InvalidBorrowerSignature();
     error InvalidLoanStatusForFunding(LoanStatus current);
-    error LoanExpiredForFunding(uint256 deadlineBlockNumber);
+    error LoanExpiredForFunding(uint256 deadlineTimestamp);
     error InvalidLoanStatusForRepayment(LoanStatus current);
-    error LoanExpiredForRepayment(uint256 deadlineBlockNumber);
+    error LoanExpiredForRepayment(uint256 deadlineTimestamp);
     error LoanAlreadyFinalized();
     error LoanNotYetExpired();
 
     constructor(address admin_) {
         require(admin_ != address(0), "HubLoan: zero address");
-        nextLoanId = 1;
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
     }
 
     function registerLoan(
+        uint256 loanId,
         LoanFlow memory fundFlow,
         LoanFlow memory repayFlow,
         LoanTerms memory loanTerms,
         bytes memory signatureOfLender,
         bytes memory signatureOfBorrower
-    ) external nonReentrant returns (uint256) {
+    ) external onlyRole(READABILITY_ROLE) nonReentrant returns (uint256) {
+        if (registeredLoans[loanId]) revert LoanAlreadyRegistered(loanId);
         _requireValidTerms(loanTerms);
 
         bytes32 msgHash = keccak256(
@@ -73,7 +73,7 @@ contract HubLoan is AccessControl, ReentrancyGuard, ILoanReadabilityTarget {
                 loanTerms.loanAmount,
                 loanTerms.interestRate,
                 loanTerms.expectedRepaymentAmount,
-                loanTerms.deadlineBlockNumber
+                loanTerms.deadlineTimestamp
             )
         );
         bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(msgHash);
@@ -81,7 +81,7 @@ contract HubLoan is AccessControl, ReentrancyGuard, ILoanReadabilityTarget {
         if (ethHash.recover(signatureOfLender) != fundFlow.from) revert InvalidLenderSignature();
         if (ethHash.recover(signatureOfBorrower) != fundFlow.to) revert InvalidBorrowerSignature();
 
-        return _storeLoan(fundFlow, repayFlow, loanTerms, signatureOfLender, signatureOfBorrower);
+        return _storeLoan(loanId, fundFlow, repayFlow, loanTerms, signatureOfLender, signatureOfBorrower);
     }
 
     function markLoanAsFunded(uint256 loanId) external onlyRole(READABILITY_ROLE) {
@@ -89,8 +89,8 @@ contract HubLoan is AccessControl, ReentrancyGuard, ILoanReadabilityTarget {
 
         LoanOrder storage loan = loanOrders[loanId];
         if (loan.status != LoanStatus.Created) revert InvalidLoanStatusForFunding(loan.status);
-        if (block.number > loan.terms.deadlineBlockNumber) {
-            revert LoanExpiredForFunding(loan.terms.deadlineBlockNumber);
+        if (block.timestamp > loan.terms.deadlineTimestamp) {
+            revert LoanExpiredForFunding(loan.terms.deadlineTimestamp);
         }
 
         loan.status = LoanStatus.Funded;
@@ -104,8 +104,8 @@ contract HubLoan is AccessControl, ReentrancyGuard, ILoanReadabilityTarget {
         if (loan.status != LoanStatus.Funded && loan.status != LoanStatus.PartlyRepaid) {
             revert InvalidLoanStatusForRepayment(loan.status);
         }
-        if (block.number > loan.terms.deadlineBlockNumber) {
-            revert LoanExpiredForRepayment(loan.terms.deadlineBlockNumber);
+        if (block.timestamp > loan.terms.deadlineTimestamp) {
+            revert LoanExpiredForRepayment(loan.terms.deadlineTimestamp);
         }
 
         loan.repaidAmount += amount;
@@ -125,7 +125,7 @@ contract HubLoan is AccessControl, ReentrancyGuard, ILoanReadabilityTarget {
         if (loan.status == LoanStatus.Repaid || loan.status == LoanStatus.Expired) {
             revert LoanAlreadyFinalized();
         }
-        if (block.number < loan.terms.deadlineBlockNumber) revert LoanNotYetExpired();
+        if (block.timestamp < loan.terms.deadlineTimestamp) revert LoanNotYetExpired();
 
         loan.status = LoanStatus.Expired;
         emit LoanExpired(loanId);
@@ -137,13 +137,13 @@ contract HubLoan is AccessControl, ReentrancyGuard, ILoanReadabilityTarget {
     }
 
     function _storeLoan(
+        uint256 loanId,
         LoanFlow memory fundFlow,
         LoanFlow memory repayFlow,
         LoanTerms memory loanTerms,
         bytes memory signatureOfLender,
         bytes memory signatureOfBorrower
-    ) internal returns (uint256 loanId) {
-        loanId = nextLoanId;
+    ) internal returns (uint256) {
         loanOrders[loanId] = LoanOrder({
             fundFlow: fundFlow,
             repayFlow: repayFlow,
@@ -162,15 +162,15 @@ contract HubLoan is AccessControl, ReentrancyGuard, ILoanReadabilityTarget {
             fundFlow.to,
             loanTerms.loanAmount,
             loanTerms.expectedRepaymentAmount,
-            loanTerms.deadlineBlockNumber
+            loanTerms.deadlineTimestamp
         );
 
-        nextLoanId += 1;
+        return loanId;
     }
 
     function _requireValidTerms(LoanTerms memory loanTerms) internal view {
         if (loanTerms.loanAmount == 0) revert InvalidLoanAmount();
-        if (loanTerms.deadlineBlockNumber <= block.number) revert DeadlineMustBeInFuture();
+        if (loanTerms.deadlineTimestamp <= block.timestamp) revert DeadlineMustBeInFuture();
         if (loanTerms.expectedRepaymentAmount < loanTerms.loanAmount) revert RepaymentBelowLoanAmount();
     }
 }

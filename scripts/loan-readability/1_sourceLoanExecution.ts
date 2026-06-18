@@ -14,15 +14,17 @@ import {
   walletFromEnv
 } from "./shared";
 
+const DEFAULT_LOAN_DURATION_SECONDS = 604_800n; // 7 days
+
 function parseArgs() {
   const argv = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
   const loanAmount = argv[0] != null ? BigInt(argv[0]) : 1_000_000n;
   const interestRate = argv[1] != null ? BigInt(argv[1]) : 500n;
-  const durationBlocks = argv[2] != null ? BigInt(argv[2]) : 50_000n;
+  const durationSeconds = argv[2] != null ? BigInt(argv[2]) : DEFAULT_LOAN_DURATION_SECONDS;
   if (loanAmount <= 0n) throw new Error("loanAmount must be > 0");
-  if (durationBlocks < 100n) throw new Error("durationInBlocks must be >= 100");
+  if (durationSeconds < 3600n) throw new Error("durationSeconds must be >= 3600 (1 hour)");
   const expectedRepaymentAmount = loanAmount + (loanAmount * interestRate) / 10_000n;
-  return { loanAmount, interestRate, durationBlocks, expectedRepaymentAmount };
+  return { loanAmount, interestRate, durationSeconds, expectedRepaymentAmount };
 }
 
 async function extractLoanId(receipt: ethers.TransactionReceipt, registry: any): Promise<bigint> {
@@ -78,7 +80,9 @@ async function main() {
 
   await waitForNonceReady(deployer.address);
 
-  const deadlineBlockNumber = BigInt(await ethers.provider.getBlockNumber()) + args.durationBlocks;
+  const latestBlock = await ethers.provider.getBlock("latest");
+  if (!latestBlock) throw new Error("Failed to fetch latest block");
+  const deadlineTimestamp = BigInt(latestBlock.timestamp) + args.durationSeconds;
   const fundFlow: LoanFlow = {
     from: lender.address,
     to: borrower.address,
@@ -93,7 +97,7 @@ async function main() {
     loanAmount: args.loanAmount,
     interestRate: args.interestRate,
     expectedRepaymentAmount: args.expectedRepaymentAmount,
-    deadlineBlockNumber
+    deadlineTimestamp
   };
 
   console.log("\n── Step 1: registerLoan on SourceLoanRegistry ──");

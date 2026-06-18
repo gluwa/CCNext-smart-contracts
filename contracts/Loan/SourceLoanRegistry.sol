@@ -22,7 +22,7 @@ contract SourceLoanRegistry {
         address indexed borrower,
         uint256 loanAmount,
         uint256 repayAmount,
-        uint256 deadlineBlockNumber
+        uint256 deadlineTimestamp
     );
 
     error LoanNotRegistered(uint256 loanId);
@@ -56,7 +56,7 @@ contract SourceLoanRegistry {
                 loanTerms.loanAmount,
                 loanTerms.interestRate,
                 loanTerms.expectedRepaymentAmount,
-                loanTerms.deadlineBlockNumber
+                loanTerms.deadlineTimestamp
             )
         );
         bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(msgHash);
@@ -83,7 +83,7 @@ contract SourceLoanRegistry {
             fundFlow.to,
             loanTerms.loanAmount,
             loanTerms.expectedRepaymentAmount,
-            loanTerms.deadlineBlockNumber
+            loanTerms.deadlineTimestamp
         );
 
         nextLoanId += 1;
@@ -97,7 +97,7 @@ contract SourceLoanRegistry {
 
     function _requireValidTerms(LoanTerms memory loanTerms) internal view {
         if (loanTerms.loanAmount == 0) revert InvalidLoanAmount();
-        if (loanTerms.deadlineBlockNumber <= block.number) revert DeadlineMustBeInFuture();
+        if (loanTerms.deadlineTimestamp <= block.timestamp) revert DeadlineMustBeInFuture();
         if (loanTerms.expectedRepaymentAmount < loanTerms.loanAmount) revert RepaymentBelowLoanAmount();
     }
 }

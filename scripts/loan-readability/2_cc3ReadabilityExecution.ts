@@ -1,20 +1,13 @@
 import { ethers } from "hardhat";
 import { loadReadabilityEnv } from "./env";
 import {
-  LoanFlow,
-  LoanTerms,
   decodeReceiptFromTxBytes,
-  decodeRegisterLoanFromTxBytes,
   fetchProof,
   filterLogsBySignature,
-  loanRegisterMessageHash,
   LOAN_FUNDED_EVENT_SIG,
+  LOAN_REGISTERED_EVENT_SIG,
   LOAN_REPAID_EVENT_SIG,
-  optionalEnv,
-  plainRegisterLoanArgs,
-  requireAddress,
-  signLoanRegisterMessage,
-  walletFromEnv
+  optionalEnv
 } from "./shared";
 
 const SKIP_HUB_REGISTER = optionalEnv("SKIP_HUB_REGISTER").toLowerCase() === "true";
@@ -32,79 +25,47 @@ async function main() {
   const fundProofUrl = optionalEnv("FUND_PROOF_URL");
   const repayProofUrl = optionalEnv("REPAY_PROOF_URL");
 
-  const lender = await walletFromEnv("LENDER_WALLET_PRIVATE_KEY", admin);
-  const borrower = await walletFromEnv("BORROWER_WALLET_PRIVATE_KEY", null);
-  if (!borrower) throw new Error("Set BORROWER_WALLET_PRIVATE_KEY in .env");
-
-  const tokenAddress = requireAddress(
-    "SOURCE_CHAIN_ERC20_CONTRACT_ADDRESS",
-    optionalEnv("SOURCE_CHAIN_ERC20_CONTRACT_ADDRESS")
-  );
-
   console.log("loanId:", loanId.toString());
   console.log("HubLoan:", env.hubLoanAddress);
 
   if (!SKIP_HUB_REGISTER) {
-    console.log("\n── Txn 1: registerLoan on HubLoan (CC3) ──");
-
-    let fundFlow: LoanFlow;
-    let repayFlow: LoanFlow;
-    let loanTerms: LoanTerms;
-
-    if (registerProofUrl) {
-      const registerProof = await fetchProof(registerProofUrl);
-      if (!registerProof) throw new Error("Failed to fetch REGISTER_PROOF_URL");
-
-      const decoded = decodeRegisterLoanFromTxBytes(registerProof.packed.txBytes);
-      if (!decoded) throw new Error("Register proof tx is not a registerLoan call");
-
-      fundFlow = decoded.fundFlow;
-      repayFlow = decoded.repayFlow;
-      const hubBlock = BigInt(await ethers.provider.getBlockNumber());
-      loanTerms = {
-        loanAmount: decoded.loanTerms.loanAmount,
-        interestRate: decoded.loanTerms.interestRate,
-        expectedRepaymentAmount: decoded.loanTerms.expectedRepaymentAmount,
-        deadlineBlockNumber: hubBlock + 10_000n
-      };
-
-      console.log("Loan terms from proof:", {
-        loanAmount: loanTerms.loanAmount.toString(),
-        interestRate: loanTerms.interestRate.toString(),
-        expectedRepaymentAmount: loanTerms.expectedRepaymentAmount.toString(),
-        deadlineBlockNumber: loanTerms.deadlineBlockNumber.toString()
-      });
-    } else {
-      fundFlow = {
-        from: lender.address,
-        to: borrower.address,
-        withToken: tokenAddress
-      };
-      repayFlow = {
-        from: borrower.address,
-        to: lender.address,
-        withToken: tokenAddress
-      };
-      loanTerms = {
-        loanAmount: 1_000_000n,
-        interestRate: 500n,
-        expectedRepaymentAmount: 1_050_000n,
-        deadlineBlockNumber: BigInt(await ethers.provider.getBlockNumber()) + 10_000n
-      };
+    console.log("\n── Txn 1: execute LoanRegistered proof ──");
+    if (!registerProofUrl) {
+      throw new Error("REGISTER_PROOF_URL is required — hub loanId comes from attested source registration");
     }
 
-    const msgHash = loanRegisterMessageHash(fundFlow, repayFlow, loanTerms);
-    const [sigLender, sigBorrower] = await Promise.all([
-      signLoanRegisterMessage(lender, msgHash),
-      signLoanRegisterMessage(borrower, msgHash)
-    ]);
+    const registerProof = await fetchProof(registerProofUrl);
+    if (!registerProof) throw new Error("Failed to fetch REGISTER_PROOF_URL");
 
-    const tx = await hubLoan
-      .connect(admin)
-      .registerLoan(
-        ...plainRegisterLoanArgs(fundFlow, repayFlow, loanTerms, sigLender, sigBorrower)
+    const registerReceipt = decodeReceiptFromTxBytes(registerProof.packed.txBytes);
+    const registeredLogs = filterLogsBySignature(registerReceipt.logs, LOAN_REGISTERED_EVENT_SIG);
+    if (registeredLogs.length === 0) {
+      throw new Error("Register proof tx has no LoanRegistered log");
+    }
+    const attestedLoanId = BigInt(registeredLogs[0].topics[1]!);
+    if (attestedLoanId !== loanId) {
+      throw new Error(
+        `READABILITY_LOAN_ID (${loanId}) does not match attested loanId (${attestedLoanId})`
       );
-    console.log("HubLoan.registerLoan tx:", tx.hash);
+    }
+    console.log("Attested loanId:", attestedLoanId.toString());
+
+    const { inclusionProof, continuityProof } = registerProof.packed;
+    const blockHeight = BigInt(registerProof.raw.headerNumber);
+
+    const ok = await readabilityManager.execute.staticCall(
+      2,
+      chainKey,
+      blockHeight,
+      inclusionProof,
+      continuityProof
+    );
+    if (!ok) throw new Error("execute(LoanRegistered) staticCall returned false");
+
+    const tx = await readabilityManager
+      .connect(admin)
+      .execute(2, chainKey, blockHeight, inclusionProof, continuityProof);
+    console.log("execute(LoanRegistered) tx:", tx.hash);
     await tx.wait();
 
     const stored = await hubLoan.getLoanOrder(loanId);

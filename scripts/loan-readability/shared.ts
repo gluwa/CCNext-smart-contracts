@@ -13,8 +13,10 @@ export const NONCE_SYNC_TIMEOUT_MS = 600_000;
 
 export const LOAN_FLOW_TYPE = "tuple(address from, address to, address withToken)";
 export const LOAN_TERMS_TYPE =
-  "tuple(uint256 loanAmount, uint256 interestRate, uint256 expectedRepaymentAmount, uint256 deadlineBlockNumber)";
+  "tuple(uint256 loanAmount, uint256 interestRate, uint256 expectedRepaymentAmount, uint256 deadlineTimestamp)";
 
+export const LOAN_REGISTERED_EVENT_SIG =
+  "0x4150dd864303d6b1464100e690e63c0ea11347decbb123e909018da0470f9870";
 export const LOAN_FUNDED_EVENT_SIG =
   "0x9e71d2fb732e68272b7e74ecfd14638673c1d77e19a5d390a3ffff054d57c44b";
 export const LOAN_REPAID_EVENT_SIG =
@@ -25,7 +27,7 @@ export type LoanTerms = {
   loanAmount: bigint;
   interestRate: bigint;
   expectedRepaymentAmount: bigint;
-  deadlineBlockNumber: bigint;
+  deadlineTimestamp: bigint;
 };
 
 export type ProofTarget = {
@@ -136,7 +138,7 @@ export function decodeRegisterLoanCalldata(data: string): {
       loanAmount: terms[0],
       interestRate: terms[1],
       expectedRepaymentAmount: terms[2],
-      deadlineBlockNumber: terms[3]
+      deadlineTimestamp: terms[3]
     }
   };
 }
@@ -179,7 +181,7 @@ export function loanRegisterMessageHash(
       loanTerms.loanAmount,
       loanTerms.interestRate,
       loanTerms.expectedRepaymentAmount,
-      loanTerms.deadlineBlockNumber
+      loanTerms.deadlineTimestamp
     ]
   );
 }
@@ -213,7 +215,7 @@ export function plainRegisterLoanArgs(
       loanAmount: loanTerms.loanAmount,
       interestRate: loanTerms.interestRate,
       expectedRepaymentAmount: loanTerms.expectedRepaymentAmount,
-      deadlineBlockNumber: loanTerms.deadlineBlockNumber
+      deadlineTimestamp: loanTerms.deadlineTimestamp
     },
     sigLender,
     sigBorrower

@@ -20,6 +20,7 @@ export async function loadReadabilityEnv() {
     optionalEnv("USC_LOAN_READABILITY_MANAGER_CONTRACT_ADDRESS")
   );
   const sourceHelperAddress = optionalEnv("SOURCE_LOAN_HELPER_CONTRACT_ADDRESS");
+  const sourceRegistryAddress = optionalEnv("SOURCE_LOAN_REGISTRY_CONTRACT_ADDRESS");
 
   const chainKey = chainKeyBytes32(Number(process.env.SOURCE_CHAIN_KEY ?? "1"));
 
@@ -43,6 +44,7 @@ export async function loadReadabilityEnv() {
     readabilityManager,
     readabilityManagerAddress,
     sourceHelperAddress,
+    sourceRegistryAddress,
     chainKey,
     needsTargetSync
   };
@@ -50,7 +52,7 @@ export async function loadReadabilityEnv() {
 
 export async function wireReadabilityRoles() {
   const env = await loadReadabilityEnv();
-  const { admin, hubLoan, readabilityManager, hubLoanAddress, sourceHelperAddress, chainKey } =
+  const { admin, hubLoan, readabilityManager, hubLoanAddress, sourceHelperAddress, sourceRegistryAddress, chainKey } =
     env;
 
   console.log("HubLoan:              ", hubLoanAddress);
@@ -75,6 +77,23 @@ export async function wireReadabilityRoles() {
     console.log("grantRole tx:", tx.hash);
   } else {
     console.log("READABILITY_ROLE already granted");
+  }
+
+  if (sourceRegistryAddress) {
+    const registry = ethers.getAddress(sourceRegistryAddress);
+    const onChainRegistry = await readabilityManager.authorizedLoanRegistries(chainKey);
+    if (onChainRegistry.toLowerCase() !== registry.toLowerCase()) {
+      console.log("Authorizing SourceLoanRegistry…");
+      const tx = await readabilityManager
+        .connect(admin)
+        .setAuthorizedLoanRegistry(chainKey, registry);
+      await tx.wait();
+      console.log("setAuthorizedLoanRegistry tx:", tx.hash);
+    } else {
+      console.log("SourceLoanRegistry already authorized");
+    }
+  } else {
+    console.log("SOURCE_LOAN_REGISTRY_CONTRACT_ADDRESS not set — skipping registry authorization");
   }
 
   if (sourceHelperAddress) {
