@@ -19,10 +19,17 @@ export async function loadReadabilityEnv() {
     "USC_LOAN_READABILITY_MANAGER_CONTRACT_ADDRESS",
     optionalEnv("USC_LOAN_READABILITY_MANAGER_CONTRACT_ADDRESS")
   );
-  const sourceHelperAddress = optionalEnv("SOURCE_LOAN_HELPER_CONTRACT_ADDRESS");
-  const sourceRegistryAddress = optionalEnv("SOURCE_LOAN_REGISTRY_CONTRACT_ADDRESS");
+  const sourceHelperAddress = requireAddress(
+    "SOURCE_LOAN_HELPER_CONTRACT_ADDRESS",
+    optionalEnv("SOURCE_LOAN_HELPER_CONTRACT_ADDRESS")
+  );
+  const sourceRegistryAddress = requireAddress(
+    "SOURCE_LOAN_REGISTRY_CONTRACT_ADDRESS",
+    optionalEnv("SOURCE_LOAN_REGISTRY_CONTRACT_ADDRESS")
+  );
 
   const chainKey = chainKeyBytes32(Number(process.env.SOURCE_CHAIN_KEY ?? "1"));
+  const sourceEvmChainId = BigInt(process.env.SOURCE_EVM_CHAIN_ID ?? "11155111");
 
   const hubLoan = await ethers.getContractAt("HubLoan", hubLoanAddress);
   const proofVerifier = await ethers.getContractAt("USCProofVerifier", proofVerifierAddress);
@@ -46,18 +53,29 @@ export async function loadReadabilityEnv() {
     sourceHelperAddress,
     sourceRegistryAddress,
     chainKey,
+    sourceEvmChainId,
     needsTargetSync
   };
 }
 
 export async function wireReadabilityRoles() {
   const env = await loadReadabilityEnv();
-  const { admin, hubLoan, readabilityManager, hubLoanAddress, sourceHelperAddress, sourceRegistryAddress, chainKey } =
-    env;
+  const {
+    admin,
+    hubLoan,
+    readabilityManager,
+    hubLoanAddress,
+    sourceHelperAddress,
+    sourceRegistryAddress,
+    chainKey,
+    sourceEvmChainId
+  } = env;
 
   console.log("HubLoan:              ", hubLoanAddress);
   console.log("ReadabilityManager:   ", env.readabilityManagerAddress);
   console.log("ProofVerifier:        ", env.proofVerifierAddress);
+  console.log("Source chainKey:      ", chainKey);
+  console.log("Source EVM chainId:   ", sourceEvmChainId.toString());
 
   if (env.needsTargetSync) {
     console.log("Syncing loanTarget → HubLoan…");
@@ -79,38 +97,47 @@ export async function wireReadabilityRoles() {
     console.log("READABILITY_ROLE already granted");
   }
 
-  if (sourceRegistryAddress) {
-    const registry = ethers.getAddress(sourceRegistryAddress);
-    const onChainRegistry = await readabilityManager.authorizedLoanRegistries(chainKey);
-    if (onChainRegistry.toLowerCase() !== registry.toLowerCase()) {
-      console.log("Authorizing SourceLoanRegistry…");
-      const tx = await readabilityManager
-        .connect(admin)
-        .setAuthorizedLoanRegistry(chainKey, registry);
-      await tx.wait();
-      console.log("setAuthorizedLoanRegistry tx:", tx.hash);
-    } else {
-      console.log("SourceLoanRegistry already authorized");
-    }
+  const onChainKey = await readabilityManager.sourceChainKey();
+  const onChainRegistry = await readabilityManager.authorizedLoanRegistry();
+  const onChainHelper = await readabilityManager.authorizedSourceContract();
+
+  const onChainEvmChainId = await readabilityManager.sourceEvmChainId();
+
+  const needsSourceChainConfig =
+    onChainKey !== chainKey ||
+    onChainEvmChainId !== sourceEvmChainId ||
+    onChainRegistry.toLowerCase() !== sourceRegistryAddress.toLowerCase() ||
+    onChainHelper.toLowerCase() !== sourceHelperAddress.toLowerCase();
+
+  if (needsSourceChainConfig) {
+    console.log("Configuring manager 1:1 source chain (chainKey + EVM chainId + registry + helper)…");
+    const tx = await readabilityManager
+      .connect(admin)
+      .configureSourceChain(chainKey, sourceEvmChainId, sourceRegistryAddress, sourceHelperAddress);
+    await tx.wait();
+    console.log("manager.configureSourceChain tx:", tx.hash);
   } else {
-    console.log("SOURCE_LOAN_REGISTRY_CONTRACT_ADDRESS not set — skipping registry authorization");
+    console.log("Manager source chain already configured");
   }
 
-  if (sourceHelperAddress) {
-    const helper = ethers.getAddress(sourceHelperAddress);
-    const onChain = await readabilityManager.authorizedSourceContracts(chainKey);
-    if (onChain.toLowerCase() !== helper.toLowerCase()) {
-      console.log("Authorizing SourceLoanHelper…");
-      const tx = await readabilityManager
-        .connect(admin)
-        .setAuthorizedSourceContract(chainKey, helper);
-      await tx.wait();
-      console.log("setAuthorizedSourceContract tx:", tx.hash);
-    } else {
-      console.log("SourceLoanHelper already authorized");
-    }
+  const hubChainKey = await hubLoan.sourceChainKey();
+  const hubEvmChainId = await hubLoan.sourceEvmChainId();
+  const hubRegistry = await hubLoan.authorizedLoanRegistry();
+
+  const needsHubSourceChainConfig =
+    hubChainKey !== chainKey ||
+    hubEvmChainId !== sourceEvmChainId ||
+    hubRegistry.toLowerCase() !== sourceRegistryAddress.toLowerCase();
+
+  if (needsHubSourceChainConfig) {
+    console.log("Configuring HubLoan 1:1 source chain (chainKey + EVM chainId + registry)…");
+    const tx = await hubLoan
+      .connect(admin)
+      .configureSourceChain(chainKey, sourceEvmChainId, sourceRegistryAddress);
+    await tx.wait();
+    console.log("hubLoan.configureSourceChain tx:", tx.hash);
   } else {
-    console.log("SOURCE_LOAN_HELPER_CONTRACT_ADDRESS not set — skipping emitter authorization");
+    console.log("HubLoan source chain already configured");
   }
 
   console.log("Setup complete.");

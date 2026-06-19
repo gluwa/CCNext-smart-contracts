@@ -23,6 +23,8 @@ struct LoanTerms {
 }
 
 struct LoanOrder {
+    bytes32 sourceChainKey;
+    uint256 sourceLoanId;
     LoanFlow fundFlow;
     LoanFlow repayFlow;
     LoanTerms terms;
@@ -31,4 +33,10 @@ struct LoanOrder {
     uint256 createdAtBlock;
     LoanStatus status;
     uint256 repaidAmount;
+}
+
+library LoanIdLib {
+    function loanKey(bytes32 chainKey, uint256 sourceLoanId) internal pure returns (bytes32) {
+        return keccak256(abi.encode(chainKey, sourceLoanId));
+    }
 }

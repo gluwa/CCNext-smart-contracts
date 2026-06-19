@@ -2,13 +2,14 @@
 pragma solidity ^0.8.20;
 
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
-import {LoanFlow, LoanStatus, LoanOrder, LoanTerms} from "../abstract/LoanTypes.sol";
+import {LoanFlow, LoanStatus, LoanOrder, LoanTerms} from "./abstract/LoanTypes.sol";
+import {LoanRegisterEIP712} from "./abstract/LoanRegisterEIP712.sol";
 
 /// @title SourceLoanRegistry
 /// @notice Source-chain loan registration (Sepolia). Loan ids must match `HubLoan` on CC3.
-contract SourceLoanRegistry {
+contract SourceLoanRegistry is EIP712 {
     using ECDSA for bytes32;
 
     mapping(uint256 => LoanOrder) public loanOrders;
@@ -26,46 +27,42 @@ contract SourceLoanRegistry {
     );
 
     error LoanNotRegistered(uint256 loanId);
+    error LoanAlreadyRegistered(uint256 loanId);
+    error UnexpectedLoanId(uint256 provided, uint256 expected);
     error InvalidLoanAmount();
     error DeadlineMustBeInFuture();
     error RepaymentBelowLoanAmount();
     error InvalidLenderSignature();
     error InvalidBorrowerSignature();
 
-    constructor() {
+    constructor() EIP712("SourceLoanRegistry", "1") {
         nextLoanId = 1;
     }
 
     function registerLoan(
+        uint256 loanId,
         LoanFlow memory fundFlow,
         LoanFlow memory repayFlow,
         LoanTerms memory loanTerms,
         bytes memory signatureOfLender,
         bytes memory signatureOfBorrower
     ) external returns (uint256) {
+        uint256 expectedLoanId = nextLoanId;
+        if (loanId != expectedLoanId) revert UnexpectedLoanId(loanId, expectedLoanId);
+        if (registeredLoans[loanId]) revert LoanAlreadyRegistered(loanId);
         _requireValidTerms(loanTerms);
 
-        bytes32 msgHash = keccak256(
-            abi.encodePacked(
-                fundFlow.from,
-                fundFlow.to,
-                fundFlow.withToken,
-                repayFlow.from,
-                repayFlow.to,
-                repayFlow.withToken,
-                loanTerms.loanAmount,
-                loanTerms.interestRate,
-                loanTerms.expectedRepaymentAmount,
-                loanTerms.deadlineTimestamp
-            )
+        bytes32 structHash = LoanRegisterEIP712.hashLoanRegister(
+            loanId, fundFlow, repayFlow, loanTerms
         );
-        bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(msgHash);
+        bytes32 digest = _hashTypedDataV4(structHash);
 
-        if (ethHash.recover(signatureOfLender) != fundFlow.from) revert InvalidLenderSignature();
-        if (ethHash.recover(signatureOfBorrower) != fundFlow.to) revert InvalidBorrowerSignature();
+        if (digest.recover(signatureOfLender) != fundFlow.from) revert InvalidLenderSignature();
+        if (digest.recover(signatureOfBorrower) != fundFlow.to) revert InvalidBorrowerSignature();
 
-        uint256 loanId = nextLoanId;
         loanOrders[loanId] = LoanOrder({
+            sourceChainKey: bytes32(0),
+            sourceLoanId: loanId,
             fundFlow: fundFlow,
             repayFlow: repayFlow,
             terms: loanTerms,

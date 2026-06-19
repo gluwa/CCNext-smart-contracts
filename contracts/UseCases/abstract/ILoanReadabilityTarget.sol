@@ -7,15 +7,18 @@ import {LoanFlow, LoanTerms} from "./LoanTypes.sol";
 /// @notice Hub loan contract interface updated by `USCLoanReadabilityManager` after proof verification.
 interface ILoanReadabilityTarget {
     function registerLoan(
-        uint256 loanId,
+        bytes32 chainKey,
+        uint256 sourceLoanId,
+        uint256 sourceChainId,
+        address sourceRegistry,
         LoanFlow memory fundFlow,
         LoanFlow memory repayFlow,
         LoanTerms memory loanTerms,
         bytes memory signatureOfLender,
         bytes memory signatureOfBorrower
-    ) external returns (uint256);
+    ) external returns (bytes32 loanKey);
 
-    function markLoanAsFunded(uint256 loanId) external;
+    function markLoanAsFunded(bytes32 chainKey, uint256 sourceLoanId) external;
 
-    function recordLoanRepayment(uint256 loanId, uint256 amount) external;
+    function recordLoanRepayment(bytes32 chainKey, uint256 sourceLoanId, uint256 amount) external;
 }

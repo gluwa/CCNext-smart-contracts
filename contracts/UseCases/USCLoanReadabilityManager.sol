@@ -7,12 +7,13 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 
 import {IUSCProofVerifier} from "../abstract/IUSCProofVerifier.sol";
 import {BlockProverTypes} from "../abstract/BlockProverTypes.sol";
-import {LoanFlow, LoanTerms} from "../abstract/LoanTypes.sol";
+import {LoanFlow, LoanTerms} from "./abstract/LoanTypes.sol";
 import {EvmV1Decoder} from "./EvmV1Decoder.sol";
-import {ILoanReadabilityTarget} from "../abstract/ILoanReadabilityTarget.sol";
+import {ILoanReadabilityTarget} from "./abstract/ILoanReadabilityTarget.sol";
 
 /// @title USCLoanReadabilityManager
 /// @notice Hub-side contract that verifies source-chain loan event proofs and updates `HubLoan`.
+/// @dev Each hub instance mirrors exactly one source chain (1:1). Emitter authorization is fail-closed.
 contract USCLoanReadabilityManager is AccessControl, Pausable, ReentrancyGuard {
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
@@ -22,7 +23,7 @@ contract USCLoanReadabilityManager is AccessControl, Pausable, ReentrancyGuard {
         LoanRegistered
     }
 
-    bytes4 private constant SOURCE_REGISTER_LOAN_SELECTOR = 0x3d04558d;
+    bytes4 private constant SOURCE_REGISTER_LOAN_SELECTOR = 0x6ae3c272;
 
     bytes32 public constant LOAN_REGISTERED_EVENT =
         0x4150dd864303d6b1464100e690e63c0ea11347decbb123e909018da0470f9870;
@@ -35,9 +36,16 @@ contract USCLoanReadabilityManager is AccessControl, Pausable, ReentrancyGuard {
     IUSCProofVerifier public proofVerifier;
     ILoanReadabilityTarget public loanTarget;
 
+    /// @notice Creditcoin prover chain key for the single linked source network.
+    bytes32 public sourceChainKey;
+    /// @notice Trusted `SourceLoanRegistry` on the linked source chain (register proofs).
+    address public authorizedLoanRegistry;
+    /// @notice Trusted `SourceLoanHelper` on the linked source chain (fund/repay proofs).
+    address public authorizedSourceContract;
+    /// @notice EVM `chainId` of the linked source chain (EIP-712 domain for register signatures).
+    uint256 public sourceEvmChainId;
+
     mapping(bytes32 => bool) public processedQueries;
-    mapping(bytes32 => address) public authorizedSourceContracts;
-    mapping(bytes32 => address) public authorizedLoanRegistries;
 
     event LoanRegisteredVerified(bytes32 indexed queryId, bytes32 indexed chainKey, uint256 indexed loanId);
     event LoanFundedVerified(bytes32 indexed queryId, bytes32 indexed chainKey, uint256 indexed loanId);
@@ -49,11 +57,20 @@ contract USCLoanReadabilityManager is AccessControl, Pausable, ReentrancyGuard {
     );
     event LoanTargetSet(address indexed previous, address indexed next);
     event ProofVerifierSet(address indexed previous, address indexed next);
-    event AuthorizedSourceContractSet(bytes32 indexed chainKey, address indexed sourceContract);
-    event AuthorizedLoanRegistrySet(bytes32 indexed chainKey, address indexed loanRegistry);
+    event SourceChainConfigured(
+        bytes32 indexed chainKey,
+        uint256 sourceEvmChainId,
+        address indexed loanRegistry,
+        address indexed sourceContract
+    );
     event QueryProcessed(bytes32 indexed queryId, bytes32 chainKey, uint64 blockHeight, uint64 txIndex);
 
     error ZeroAddress();
+    error InvalidChainKey();
+    error SourceChainNotConfigured();
+    error InvalidSourceChainKey(bytes32 provided, bytes32 expected);
+    error LoanRegistryNotConfigured();
+    error SourceContractNotConfigured();
     error QueryAlreadyProcessed(bytes32 queryId);
     error InvalidAction(uint8 action);
     error UnsupportedTxType(uint8 txType);
@@ -63,7 +80,9 @@ contract USCLoanReadabilityManager is AccessControl, Pausable, ReentrancyGuard {
     error InvalidLogTopicCount(uint256 actual, uint256 expected);
     error InvalidLogDataLength(uint256 actual, uint256 expected);
     error InvalidRegisterCalldata();
+    error RegisterCalldataMismatch();
     error RegisterEventMismatch();
+    error InvalidSourceEvmChainId();
 
     constructor(address loanTarget_, address proofVerifier_, address admin_) {
         if (loanTarget_ == address(0) || proofVerifier_ == address(0) || admin_ == address(0)) {
@@ -89,20 +108,21 @@ contract USCLoanReadabilityManager is AccessControl, Pausable, ReentrancyGuard {
         emit ProofVerifierSet(prev, newVerifier);
     }
 
-    function setAuthorizedSourceContract(bytes32 chainKey, address sourceContract)
-        external
-        onlyRole(DEFAULT_ADMIN_ROLE)
-    {
-        authorizedSourceContracts[chainKey] = sourceContract;
-        emit AuthorizedSourceContractSet(chainKey, sourceContract);
-    }
-
-    function setAuthorizedLoanRegistry(bytes32 chainKey, address loanRegistry)
-        external
-        onlyRole(DEFAULT_ADMIN_ROLE)
-    {
-        authorizedLoanRegistries[chainKey] = loanRegistry;
-        emit AuthorizedLoanRegistrySet(chainKey, loanRegistry);
+    /// @notice Configure the single source chain this hub mirrors (1:1).
+    function configureSourceChain(
+        bytes32 chainKey_,
+        uint256 sourceEvmChainId_,
+        address loanRegistry_,
+        address sourceContract_
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (chainKey_ == bytes32(0) || sourceEvmChainId_ == 0 || loanRegistry_ == address(0) || sourceContract_ == address(0)) {
+            revert ZeroAddress();
+        }
+        sourceChainKey = chainKey_;
+        sourceEvmChainId = sourceEvmChainId_;
+        authorizedLoanRegistry = loanRegistry_;
+        authorizedSourceContract = sourceContract_;
+        emit SourceChainConfigured(chainKey_, sourceEvmChainId_, loanRegistry_, sourceContract_);
     }
 
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -120,6 +140,8 @@ contract USCLoanReadabilityManager is AccessControl, Pausable, ReentrancyGuard {
         BlockProverTypes.InclusionProof calldata inclusionProof,
         BlockProverTypes.ContinuityProof calldata continuityProof
     ) external whenNotPaused nonReentrant returns (bool) {
+        _requireConfiguredSourceChain(chainKey);
+
         bytes32 queryId = _computeQueryId(chainKey, blockHeight, inclusionProof);
         if (processedQueries[queryId]) revert QueryAlreadyProcessed(queryId);
         bytes memory encodedTransaction = proofVerifier.verifyProofs(
@@ -133,6 +155,12 @@ contract USCLoanReadabilityManager is AccessControl, Pausable, ReentrancyGuard {
         emit QueryProcessed(queryId, chainKey, blockHeight, txIndex);
         _processAction(action, chainKey, queryId, encodedTransaction);
         return true;
+    }
+
+    function _requireConfiguredSourceChain(bytes32 chainKey) internal view {
+        bytes32 configured = sourceChainKey;
+        if (configured == bytes32(0)) revert SourceChainNotConfigured();
+        if (chainKey != configured) revert InvalidSourceChainKey(chainKey, configured);
     }
 
     function _processAction(
@@ -166,7 +194,7 @@ contract USCLoanReadabilityManager is AccessControl, Pausable, ReentrancyGuard {
             EvmV1Decoder.getLogsByEventSignature(receipt, LOAN_REGISTERED_EVENT);
         if (logs.length == 0) revert NoMatchingLogs(LOAN_REGISTERED_EVENT);
         EvmV1Decoder.LogEntry memory log = logs[0];
-        _validateLoanRegistry(chainKey, log.address_);
+        _validateLoanRegistry(log.address_);
 
         if (log.topics.length != 4) revert InvalidLogTopicCount(log.topics.length, 4);
         if (log.data.length != 96) revert InvalidLogDataLength(log.data.length, 96);
@@ -178,6 +206,7 @@ contract USCLoanReadabilityManager is AccessControl, Pausable, ReentrancyGuard {
             abi.decode(log.data, (uint256, uint256, uint256));
 
         (
+            uint256 calldataLoanId,
             LoanFlow memory fundFlow,
             LoanFlow memory repayFlow,
             LoanTerms memory loanTerms,
@@ -185,6 +214,8 @@ contract USCLoanReadabilityManager is AccessControl, Pausable, ReentrancyGuard {
             bytes memory signatureOfBorrower
         ) = _decodeSourceRegisterLoanCalldata(EvmV1Decoder.decodeCommonTxFields(encodedTransaction).data);
 
+        if (calldataLoanId != loanId) revert RegisterCalldataMismatch();
+        if (sourceEvmChainId == 0) revert InvalidSourceEvmChainId();
         if (
             fundFlow.from != lender || fundFlow.to != borrower || loanTerms.loanAmount != loanAmount
                 || loanTerms.expectedRepaymentAmount != repayAmount
@@ -194,7 +225,10 @@ contract USCLoanReadabilityManager is AccessControl, Pausable, ReentrancyGuard {
         }
 
         loanTarget.registerLoan(
+            chainKey,
             loanId,
+            sourceEvmChainId,
+            authorizedLoanRegistry,
             fundFlow,
             repayFlow,
             loanTerms,
@@ -212,12 +246,12 @@ contract USCLoanReadabilityManager is AccessControl, Pausable, ReentrancyGuard {
         EvmV1Decoder.LogEntry[] memory logs = EvmV1Decoder.getLogsByEventSignature(receipt, LOAN_FUNDED_EVENT);
         if (logs.length == 0) revert NoMatchingLogs(LOAN_FUNDED_EVENT);
         EvmV1Decoder.LogEntry memory log = logs[0];
-        _validateSourceContract(chainKey, log.address_);
+        _validateSourceContract(log.address_);
 
         if (log.topics.length != 2) revert InvalidLogTopicCount(log.topics.length, 2);
         uint256 loanId = uint256(log.topics[1]);
 
-        loanTarget.markLoanAsFunded(loanId);
+        loanTarget.markLoanAsFunded(chainKey, loanId);
         emit LoanFundedVerified(queryId, chainKey, loanId);
     }
 
@@ -229,7 +263,7 @@ contract USCLoanReadabilityManager is AccessControl, Pausable, ReentrancyGuard {
         EvmV1Decoder.LogEntry[] memory logs = EvmV1Decoder.getLogsByEventSignature(receipt, LOAN_REPAID_EVENT);
         if (logs.length == 0) revert NoMatchingLogs(LOAN_REPAID_EVENT);
         EvmV1Decoder.LogEntry memory log = logs[0];
-        _validateSourceContract(chainKey, log.address_);
+        _validateSourceContract(log.address_);
 
         if (log.topics.length != 2) revert InvalidLogTopicCount(log.topics.length, 2);
         if (log.data.length != 32) revert InvalidLogDataLength(log.data.length, 32);
@@ -237,28 +271,27 @@ contract USCLoanReadabilityManager is AccessControl, Pausable, ReentrancyGuard {
         uint256 loanId = uint256(log.topics[1]);
         uint256 amount = abi.decode(log.data, (uint256));
 
-        loanTarget.recordLoanRepayment(loanId, amount);
+        loanTarget.recordLoanRepayment(chainKey, loanId, amount);
         emit LoanRepaymentVerified(queryId, chainKey, loanId, amount);
     }
 
-    function _validateSourceContract(bytes32 chainKey, address emitter) internal view {
-        address expected = authorizedSourceContracts[chainKey];
-        if (expected != address(0) && emitter != expected) {
-            revert UnauthorizedSourceContract(emitter, expected);
-        }
+    function _validateSourceContract(address emitter) internal view {
+        address expected = authorizedSourceContract;
+        if (expected == address(0)) revert SourceContractNotConfigured();
+        if (emitter != expected) revert UnauthorizedSourceContract(emitter, expected);
     }
 
-    function _validateLoanRegistry(bytes32 chainKey, address emitter) internal view {
-        address expected = authorizedLoanRegistries[chainKey];
-        if (expected != address(0) && emitter != expected) {
-            revert UnauthorizedSourceContract(emitter, expected);
-        }
+    function _validateLoanRegistry(address emitter) internal view {
+        address expected = authorizedLoanRegistry;
+        if (expected == address(0)) revert LoanRegistryNotConfigured();
+        if (emitter != expected) revert UnauthorizedSourceContract(emitter, expected);
     }
 
     function _decodeSourceRegisterLoanCalldata(bytes memory data)
         internal
         pure
         returns (
+            uint256 loanId,
             LoanFlow memory fundFlow,
             LoanFlow memory repayFlow,
             LoanTerms memory loanTerms,
@@ -278,9 +311,9 @@ contract USCLoanReadabilityManager is AccessControl, Pausable, ReentrancyGuard {
             payload[i] = data[i + 4];
         }
 
-        (fundFlow, repayFlow, loanTerms, signatureOfLender, signatureOfBorrower) = abi.decode(
+        (loanId, fundFlow, repayFlow, loanTerms, signatureOfLender, signatureOfBorrower) = abi.decode(
             payload,
-            (LoanFlow, LoanFlow, LoanTerms, bytes, bytes)
+            (uint256, LoanFlow, LoanFlow, LoanTerms, bytes, bytes)
         );
     }
 

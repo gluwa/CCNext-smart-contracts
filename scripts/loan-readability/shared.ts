@@ -11,7 +11,24 @@ export const PROVER_INDEX_MAX_ATTEMPTS = 180;
 export const NONCE_SYNC_POLL_MS = 5_000;
 export const NONCE_SYNC_TIMEOUT_MS = 600_000;
 
-export const LOAN_FLOW_TYPE = "tuple(address from, address to, address withToken)";
+export const LOAN_REGISTER_EIP712_DOMAIN_NAME = "SourceLoanRegistry";
+export const LOAN_REGISTER_EIP712_DOMAIN_VERSION = "1";
+
+export const LOAN_REGISTER_EIP712_TYPES = {
+  LoanRegister: [
+    { name: "loanId", type: "uint256" },
+    { name: "fundFrom", type: "address" },
+    { name: "fundTo", type: "address" },
+    { name: "fundToken", type: "address" },
+    { name: "repayFrom", type: "address" },
+    { name: "repayTo", type: "address" },
+    { name: "repayToken", type: "address" },
+    { name: "loanAmount", type: "uint256" },
+    { name: "interestRate", type: "uint256" },
+    { name: "expectedRepaymentAmount", type: "uint256" },
+    { name: "deadlineTimestamp", type: "uint256" }
+  ]
+} as const;
 export const LOAN_TERMS_TYPE =
   "tuple(uint256 loanAmount, uint256 interestRate, uint256 expectedRepaymentAmount, uint256 deadlineTimestamp)";
 
@@ -106,18 +123,20 @@ export async function waitForNonceReady(address: string): Promise<number> {
 }
 
 export function decodeRegisterLoanCalldata(data: string): {
+  loanId: bigint;
   fundFlow: LoanFlow;
   repayFlow: LoanFlow;
   loanTerms: LoanTerms;
 } | null {
   const selector = ethers.id(
-    "registerLoan((address,address,address),(address,address,address),(uint256,uint256,uint256,uint256),bytes,bytes)"
+    "registerLoan(uint256,(address,address,address),(address,address,address),(uint256,uint256,uint256,uint256),bytes,bytes)"
   ).slice(0, 10);
   if (!data.toLowerCase().startsWith(selector)) return null;
 
   const coder = ethers.AbiCoder.defaultAbiCoder();
   const decoded = coder.decode(
     [
+      "uint256",
       "tuple(address,address,address)",
       "tuple(address,address,address)",
       "tuple(uint256,uint256,uint256,uint256)",
@@ -127,11 +146,12 @@ export function decodeRegisterLoanCalldata(data: string): {
     "0x" + data.slice(10)
   );
 
-  const fund = decoded[0] as [string, string, string];
-  const repay = decoded[1] as [string, string, string];
-  const terms = decoded[2] as [bigint, bigint, bigint, bigint];
+  const fund = decoded[1] as [string, string, string];
+  const repay = decoded[2] as [string, string, string];
+  const terms = decoded[3] as [bigint, bigint, bigint, bigint];
 
   return {
+    loanId: decoded[0] as bigint,
     fundFlow: { from: fund[0], to: fund[1], withToken: fund[2] },
     repayFlow: { from: repay[0], to: repay[1], withToken: repay[2] },
     loanTerms: {
@@ -153,6 +173,37 @@ export function decodeRegisterLoanFromTxBytes(txBytes: string) {
   return decodeRegisterLoanCalldata(String(data));
 }
 
+export function loanRegisterTypedDataValue(
+  loanId: bigint,
+  fundFlow: LoanFlow,
+  repayFlow: LoanFlow,
+  loanTerms: LoanTerms
+) {
+  return {
+    loanId,
+    fundFrom: fundFlow.from,
+    fundTo: fundFlow.to,
+    fundToken: fundFlow.withToken,
+    repayFrom: repayFlow.from,
+    repayTo: repayFlow.to,
+    repayToken: repayFlow.withToken,
+    loanAmount: loanTerms.loanAmount,
+    interestRate: loanTerms.interestRate,
+    expectedRepaymentAmount: loanTerms.expectedRepaymentAmount,
+    deadlineTimestamp: loanTerms.deadlineTimestamp
+  };
+}
+
+export function loanRegisterEip712Domain(chainId: bigint, verifyingContract: string) {
+  return {
+    name: LOAN_REGISTER_EIP712_DOMAIN_NAME,
+    version: LOAN_REGISTER_EIP712_DOMAIN_VERSION,
+    chainId,
+    verifyingContract
+  };
+}
+
+/** @deprecated Use signLoanRegisterTypedData for EIP-712 bound signatures. */
 export function loanRegisterMessageHash(
   fundFlow: LoanFlow,
   repayFlow: LoanFlow,
@@ -186,14 +237,22 @@ export function loanRegisterMessageHash(
   );
 }
 
-export async function signLoanRegisterMessage(
+export async function signLoanRegisterTypedData(
   signer: ethers.Signer,
-  msgHash: string
+  registryAddress: string,
+  loanId: bigint,
+  fundFlow: LoanFlow,
+  repayFlow: LoanFlow,
+  loanTerms: LoanTerms
 ): Promise<string> {
-  return signer.signMessage(ethers.getBytes(msgHash));
+  const network = await signer.provider!.getNetwork();
+  const domain = loanRegisterEip712Domain(network.chainId, registryAddress);
+  const value = loanRegisterTypedDataValue(loanId, fundFlow, repayFlow, loanTerms);
+  return signer.signTypedData(domain, LOAN_REGISTER_EIP712_TYPES, value);
 }
 
 export function plainRegisterLoanArgs(
+  loanId: bigint,
   fundFlow: LoanFlow,
   repayFlow: LoanFlow,
   loanTerms: LoanTerms,
@@ -201,6 +260,7 @@ export function plainRegisterLoanArgs(
   sigBorrower: string
 ) {
   return [
+    loanId,
     {
       from: fundFlow.from,
       to: fundFlow.to,
@@ -220,6 +280,12 @@ export function plainRegisterLoanArgs(
     sigLender,
     sigBorrower
   ] as const;
+}
+
+export function loanKeyBytes32(chainKey: string, sourceLoanId: bigint): string {
+  return ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(["bytes32", "uint256"], [chainKey, sourceLoanId])
+  );
 }
 
 export async function resolveProofTarget(

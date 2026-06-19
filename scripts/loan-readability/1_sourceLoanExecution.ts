@@ -2,13 +2,12 @@ import { ethers } from "hardhat";
 import {
   LoanFlow,
   LoanTerms,
-  loanRegisterMessageHash,
   plainRegisterLoanArgs,
   requireAddress,
   optionalEnv,
   resolveProofTarget,
   printProofTarget,
-  signLoanRegisterMessage,
+  signLoanRegisterTypedData,
   waitForNonceReady,
   waitForProver,
   walletFromEnv
@@ -101,14 +100,15 @@ async function main() {
   };
 
   console.log("\n── Step 1: registerLoan on SourceLoanRegistry ──");
-  const msgHash = loanRegisterMessageHash(fundFlow, repayFlow, loanTerms);
+  const nextLoanId = await registry.nextLoanId();
+  console.log("nextLoanId:", nextLoanId.toString());
   const [sigLender, sigBorrower] = await Promise.all([
-    signLoanRegisterMessage(lender, msgHash),
-    signLoanRegisterMessage(borrower, msgHash)
+    signLoanRegisterTypedData(lender, registryAddress, nextLoanId, fundFlow, repayFlow, loanTerms),
+    signLoanRegisterTypedData(borrower, registryAddress, nextLoanId, fundFlow, repayFlow, loanTerms)
   ]);
 
   const registerTx = await registry.registerLoan(
-    ...plainRegisterLoanArgs(fundFlow, repayFlow, loanTerms, sigLender, sigBorrower)
+    ...plainRegisterLoanArgs(nextLoanId, fundFlow, repayFlow, loanTerms, sigLender, sigBorrower)
   );
   console.log("registerLoan tx:", registerTx.hash);
   const registerReceipt = await registerTx.wait();

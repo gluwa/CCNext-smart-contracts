@@ -56,8 +56,8 @@ Phase 2 — Hub setup (CC3 testnet, once per deploy)
 
   Admin → USCLoanReadabilityManager.setLoanTarget(HubLoan)
   Admin → HubLoan.grantRole(READABILITY_ROLE, manager)
-  Admin → manager.setAuthorizedLoanRegistry(chainKey, SourceLoanRegistry)
-  Admin → manager.setAuthorizedSourceContract(chainKey, SourceLoanHelper)
+  Admin → manager.configureSourceChain(chainKey, SourceLoanRegistry, SourceLoanHelper)
+      (single 1:1 source link — hub rejects other chainKeys)
 
 Phase 3 — Mirror state on CC3
 
@@ -102,16 +102,17 @@ Operator → USCLoanReadabilityManager.execute(
                continuityProof)
            └─ proofVerifier.verifyProofs → encodedTransaction
            └─ EvmV1Decoder.decodeReceiptFields → logs
+           └─ require chainKey == sourceChainKey (hub mirrors one source chain only)
            └─ action == LoanRegistered:
-                  validate emitter ∈ authorizedLoanRegistries[chainKey]
+                  validate emitter == authorizedLoanRegistry (fail-closed)
                   read loanId from LoanRegistered log
                   decode registerLoan calldata from tx; cross-check vs event
                   loanTarget.registerLoan(loanId, …)   [READABILITY_ROLE on HubLoan]
            └─ action == LoanFunded:
-                  validate emitter ∈ authorizedSourceContracts[chainKey]
+                  validate emitter == authorizedSourceContract (fail-closed)
                   loanTarget.markLoanAsFunded(loanId)
            └─ action == LoanRepaid:
-                  validate emitter ∈ authorizedSourceContracts[chainKey]
+                  validate emitter == authorizedSourceContract (fail-closed)
                   loanTarget.recordLoanRepayment(loanId, amount)
 ```
 
@@ -154,7 +155,7 @@ Register proofs are heavier (calldata + event match). Fund/repay proofs only rea
  │   │  execute(action, chainKey, blockHeight, inclusionProof, continuityProof)    │    │
  │   │    → USCProofVerifier.verifyProofs                                            │    │
  │   │    → EvmV1Decoder (tx + receipt logs)                                         │    │
- │   │    → authorizedLoanRegistries / authorizedSourceContracts                     │    │
+ │   │    → sourceChainKey / authorizedLoanRegistry / authorizedSourceContract       │    │
  │   └───────────────────────────────┬──────────────────────────────────────────────┘    │
  │                                   │ READABILITY_ROLE                                  │
  │                                   ▼                                                    │
@@ -202,11 +203,11 @@ Default script values: `loanAmount = 1_000_000`, `interestRate = 500`, duration 
 
 | `action` | Enum | Source event | Emitter check |
 |----------|------|--------------|---------------|
-| `0` | `LoanFunded` | `LoanFunded(uint256 loanId)` | `authorizedSourceContracts[chainKey]` |
-| `1` | `LoanRepaid` | `LoanRepaid(uint256 loanId, uint256 amount)` | `authorizedSourceContracts[chainKey]` |
-| `2` | `LoanRegistered` | `LoanRegistered(…)` + tx calldata | `authorizedLoanRegistries[chainKey]` |
+| `0` | `LoanFunded` | `LoanFunded(uint256 loanId)` | `authorizedSourceContract` (reverts if unset) |
+| `1` | `LoanRepaid` | `LoanRepaid(uint256 loanId, uint256 amount)` | `authorizedSourceContract` (reverts if unset) |
+| `2` | `LoanRegistered` | `LoanRegistered(…)` + tx calldata | `authorizedLoanRegistry` (reverts if unset) |
 
-If an authorized address mapping is `address(0)`, emitter validation is skipped (permissive); proof verification still required.
+`execute` also reverts if `sourceChainKey` is unset or if the proof `chainKey` does not match the configured source chain (1:1 hub ↔ source).
 
 ---
 
@@ -301,9 +302,7 @@ function execute(
 **Setup (admin):**
 
 ```solidity
-setLoanTarget(hubLoan);
-setAuthorizedLoanRegistry(chainKey, sourceLoanRegistry);   // register proofs
-setAuthorizedSourceContract(chainKey, sourceLoanHelper);  // fund/repay proofs
+configureSourceChain(chainKey, sourceLoanRegistry, sourceLoanHelper);
 ```
 
 On `HubLoan`: `grantRole(READABILITY_ROLE, manager)`.
@@ -446,7 +445,9 @@ Each deploy script targets **one chain only** — do not mix Sepolia and CC3 add
 | Topic | Behavior |
 |-------|----------|
 | **Proof replay** | `processedQueries[queryId]` prevents re-submitting the same `(chainKey, blockHeight, txIndex)` proof |
-| **Emitter trust** | Non-zero `authorizedLoanRegistries` / `authorizedSourceContracts` enforce expected log emitter per `chainKey` |
+| **Single source chain** | Hub accepts proofs only for `sourceChainKey`; other chain keys revert with `InvalidSourceChainKey` |
+| **Emitter trust (fail-closed)** | `authorizedLoanRegistry` / `authorizedSourceContract` must be set; unset or wrong emitter reverts |
+| **Unconfigured hub** | `execute` reverts with `SourceChainNotConfigured` until `configureSourceChain` is called |
 | **Register integrity** | `LoanRegistered` event fields are cross-checked against decoded `registerLoan` calldata (`RegisterEventMismatch`) |
 | **Hub write access** | Only `READABILITY_ROLE` (manager) can mutate `HubLoan`; signatures re-verified on hub register |
 | **Loan ID collision** | `LoanAlreadyRegistered` on hub if the same attested `loanId` is registered twice |

@@ -28,6 +28,28 @@ async function main() {
   console.log("loanId:", loanId.toString());
   console.log("HubLoan:", env.hubLoanAddress);
 
+  const onChainKey = await readabilityManager.sourceChainKey();
+  if (onChainKey === ethers.ZeroHash) {
+    throw new Error("Manager source chain not configured — run yarn loan_readability:setup");
+  }
+  if (onChainKey !== chainKey) {
+    throw new Error(
+      `SOURCE_CHAIN_KEY mismatch: .env=${chainKey}, manager=${onChainKey}`
+    );
+  }
+  console.log("sourceChainKey:", onChainKey);
+
+  const hubChainKey = await hubLoan.sourceChainKey();
+  if (hubChainKey === ethers.ZeroHash) {
+    throw new Error("HubLoan source chain not configured — run yarn loan_readability:setup");
+  }
+  if (hubChainKey !== chainKey) {
+    throw new Error(
+      `SOURCE_CHAIN_KEY mismatch: .env=${chainKey}, hubLoan=${hubChainKey}`
+    );
+  }
+  console.log("hubLoan.sourceChainKey:", hubChainKey);
+
   if (!SKIP_HUB_REGISTER) {
     console.log("\n── Txn 1: execute LoanRegistered proof ──");
     if (!registerProofUrl) {
@@ -68,7 +90,7 @@ async function main() {
     console.log("execute(LoanRegistered) tx:", tx.hash);
     await tx.wait();
 
-    const stored = await hubLoan.getLoanOrder(loanId);
+    const stored = await hubLoan.getLoanOrder(chainKey, loanId);
     console.log("hub loan status:", stored.status.toString(), "(0=Created)");
   } else {
     console.log("\n── Txn 1: skipped (SKIP_HUB_REGISTER=true) ──");
@@ -101,7 +123,7 @@ async function main() {
     console.log("execute(LoanFunded) tx:", fundTx.hash);
     await fundTx.wait();
 
-    const loanAfterFund = await hubLoan.getLoanOrder(loanId);
+    const loanAfterFund = await hubLoan.getLoanOrder(chainKey, loanId);
     console.log("loan status after fund:", loanAfterFund.status.toString(), "(1=Funded)");
   } else {
     console.log("\n── Txn 2: skipped (no FUND_PROOF_URL) ──");
@@ -134,7 +156,7 @@ async function main() {
     console.log("execute(LoanRepaid) tx:", repayTx.hash);
     await repayTx.wait();
 
-    const loanAfterRepay = await hubLoan.getLoanOrder(loanId);
+    const loanAfterRepay = await hubLoan.getLoanOrder(chainKey, loanId);
     console.log("loan status after repay:", loanAfterRepay.status.toString());
     console.log("repaidAmount:", loanAfterRepay.repaidAmount.toString());
   } else {
