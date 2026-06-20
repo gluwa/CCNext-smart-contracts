@@ -8,7 +8,7 @@ import {LoanFlow, LoanStatus, LoanOrder, LoanTerms} from "./abstract/LoanTypes.s
 import {LoanRegisterEIP712} from "./abstract/LoanRegisterEIP712.sol";
 
 /// @title SourceLoanRegistry
-/// @notice Source-chain loan registration (Sepolia). Loan ids must match `HubLoan` on CC3.
+/// @notice Source-chain loan registration (Sepolia). Loan ids must match `DestinationLoanRecording` on CC3.
 contract SourceLoanRegistry is EIP712 {
     using ECDSA for bytes32;
 

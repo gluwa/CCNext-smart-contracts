@@ -30,10 +30,10 @@ async function deploySourceStack(admin: ethers.Wallet, deployer: string) {
 }
 
 async function deployCc3Stack(admin: ethers.Wallet, deployer: string) {
-  const HubLoan = await ethers.getContractFactory("HubLoan");
-  const hubLoan = await HubLoan.connect(admin).deploy(deployer);
-  await hubLoan.waitForDeployment();
-  console.log("HubLoan:", await hubLoan.getAddress());
+  const DestinationLoanRecording = await ethers.getContractFactory("DestinationLoanRecording");
+  const destinationLoanRecording = await DestinationLoanRecording.connect(admin).deploy(deployer);
+  await destinationLoanRecording.waitForDeployment();
+  console.log("DestinationLoanRecording:", await destinationLoanRecording.getAddress());
 
   const ProofVerifier = await ethers.getContractFactory("USCProofVerifier");
   const proofVerifier = await ProofVerifier.connect(admin).deploy();
@@ -43,7 +43,7 @@ async function deployCc3Stack(admin: ethers.Wallet, deployer: string) {
   // EvmV1Decoder is an internal-only library — inlined at compile time, no deploy/link step.
   const Manager = await ethers.getContractFactory("USCLoanReadabilityManager");
   const manager = await Manager.connect(admin).deploy(
-    await hubLoan.getAddress(),
+    await destinationLoanRecording.getAddress(),
     await proofVerifier.getAddress(),
     deployer
   );
@@ -51,7 +51,9 @@ async function deployCc3Stack(admin: ethers.Wallet, deployer: string) {
   console.log("USCLoanReadabilityManager:", await manager.getAddress());
 
   console.log("\nCC3 deploy complete. Set in .env:");
-  console.log(`HUB_LOAN_CONTRACT_ADDRESS=${await hubLoan.getAddress()}`);
+  console.log(
+    `DESTINATION_LOAN_RECORDING_CONTRACT_ADDRESS=${await destinationLoanRecording.getAddress()}`
+  );
   console.log(`USC_PROOF_VERIFIER_CONTRACT_ADDRESS=${await proofVerifier.getAddress()}`);
   console.log(`USC_LOAN_READABILITY_MANAGER_CONTRACT_ADDRESS=${await manager.getAddress()}`);
 }

@@ -14,7 +14,7 @@ const SKIP_HUB_REGISTER = optionalEnv("SKIP_HUB_REGISTER").toLowerCase() === "tr
 
 async function main() {
   const env = await loadReadabilityEnv();
-  const { admin, hubLoan, readabilityManager, chainKey } = env;
+  const { admin, destinationLoanRecording, readabilityManager, chainKey } = env;
 
   const loanId = BigInt(optionalEnv("READABILITY_LOAN_ID") || "0");
   if (loanId === 0n) {
@@ -26,7 +26,7 @@ async function main() {
   const repayProofUrl = optionalEnv("REPAY_PROOF_URL");
 
   console.log("loanId:", loanId.toString());
-  console.log("HubLoan:", env.hubLoanAddress);
+  console.log("DestinationLoanRecording:", env.destinationLoanRecordingAddress);
 
   const onChainKey = await readabilityManager.sourceChainKey();
   if (onChainKey === ethers.ZeroHash) {
@@ -39,16 +39,18 @@ async function main() {
   }
   console.log("sourceChainKey:", onChainKey);
 
-  const hubChainKey = await hubLoan.sourceChainKey();
-  if (hubChainKey === ethers.ZeroHash) {
-    throw new Error("HubLoan source chain not configured — run yarn loan_readability:setup");
-  }
-  if (hubChainKey !== chainKey) {
+  const destinationChainKey = await destinationLoanRecording.sourceChainKey();
+  if (destinationChainKey === ethers.ZeroHash) {
     throw new Error(
-      `SOURCE_CHAIN_KEY mismatch: .env=${chainKey}, hubLoan=${hubChainKey}`
+      "DestinationLoanRecording source chain not configured — run yarn loan_readability:setup"
     );
   }
-  console.log("hubLoan.sourceChainKey:", hubChainKey);
+  if (destinationChainKey !== chainKey) {
+    throw new Error(
+      `SOURCE_CHAIN_KEY mismatch: .env=${chainKey}, destinationLoanRecording=${destinationChainKey}`
+    );
+  }
+  console.log("destinationLoanRecording.sourceChainKey:", destinationChainKey);
 
   if (!SKIP_HUB_REGISTER) {
     console.log("\n── Txn 1: execute LoanRegistered proof ──");
@@ -90,8 +92,8 @@ async function main() {
     console.log("execute(LoanRegistered) tx:", tx.hash);
     await tx.wait();
 
-    const stored = await hubLoan.getLoanOrder(chainKey, loanId);
-    console.log("hub loan status:", stored.status.toString(), "(0=Created)");
+    const stored = await destinationLoanRecording.getLoanOrder(chainKey, loanId);
+    console.log("destination loan status:", stored.status.toString(), "(0=Created)");
   } else {
     console.log("\n── Txn 1: skipped (SKIP_HUB_REGISTER=true) ──");
   }
@@ -123,7 +125,7 @@ async function main() {
     console.log("execute(LoanFunded) tx:", fundTx.hash);
     await fundTx.wait();
 
-    const loanAfterFund = await hubLoan.getLoanOrder(chainKey, loanId);
+    const loanAfterFund = await destinationLoanRecording.getLoanOrder(chainKey, loanId);
     console.log("loan status after fund:", loanAfterFund.status.toString(), "(1=Funded)");
   } else {
     console.log("\n── Txn 2: skipped (no FUND_PROOF_URL) ──");
@@ -156,7 +158,7 @@ async function main() {
     console.log("execute(LoanRepaid) tx:", repayTx.hash);
     await repayTx.wait();
 
-    const loanAfterRepay = await hubLoan.getLoanOrder(chainKey, loanId);
+    const loanAfterRepay = await destinationLoanRecording.getLoanOrder(chainKey, loanId);
     console.log("loan status after repay:", loanAfterRepay.status.toString());
     console.log("repaidAmount:", loanAfterRepay.repaidAmount.toString());
   } else {

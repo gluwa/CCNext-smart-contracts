@@ -5,14 +5,14 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-import {IUSCProofVerifier} from "../abstract/IUSCProofVerifier.sol";
-import {BlockProverTypes} from "../abstract/BlockProverTypes.sol";
+import {IUSCProofVerifier} from "../../abstract/IUSCProofVerifier.sol";
+import {BlockProverTypes} from "../../abstract/BlockProverTypes.sol";
 import {LoanFlow, LoanTerms} from "./abstract/LoanTypes.sol";
 import {EvmV1Decoder} from "./EvmV1Decoder.sol";
 import {ILoanReadabilityTarget} from "./abstract/ILoanReadabilityTarget.sol";
 
 /// @title USCLoanReadabilityManager
-/// @notice Hub-side contract that verifies source-chain loan event proofs and updates `HubLoan`.
+/// @notice Hub-side contract that verifies source-chain loan event proofs and updates `DestinationLoanRecording`.
 /// @dev Each hub instance mirrors exactly one source chain (1:1). Emitter authorization is fail-closed.
 contract USCLoanReadabilityManager is AccessControl, Pausable, ReentrancyGuard {
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");

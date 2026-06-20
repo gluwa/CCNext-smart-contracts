@@ -53,7 +53,7 @@ library LoanRegisterEIP712 {
         );
     }
 
-    /// @notice EIP-712 digest verified on source (`SourceLoanRegistry`) and hub (`HubLoan`).
+    /// @notice EIP-712 digest verified on source (`SourceLoanRegistry`) and destination (`DestinationLoanRecording`).
     function digest(
         uint256 chainId,
         address verifyingContract,

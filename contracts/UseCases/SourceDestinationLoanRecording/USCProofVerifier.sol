@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {IUSCProofVerifier} from "../abstract/IUSCProofVerifier.sol";
-import {BlockProverTypes} from "../abstract/BlockProverTypes.sol";
-import {INativeQueryVerifier, NativeQueryVerifierLib} from "../abstract/INativeQueryVerifier.sol";
-import {QueryProofVerificationLib} from "../abstract/QueryProofVerificationLib.sol";
+import {IUSCProofVerifier} from "../../abstract/IUSCProofVerifier.sol";
+import {BlockProverTypes} from "../../abstract/BlockProverTypes.sol";
+import {INativeQueryVerifier, NativeQueryVerifierLib} from "../../abstract/INativeQueryVerifier.sol";
+import {QueryProofVerificationLib} from "../../abstract/QueryProofVerificationLib.sol";
 
 /// @title USCProofVerifier
 /// @notice CC3 query proof verification via native precompile `0xFD2`.
