@@ -1,6 +1,7 @@
-# Cross-Chain Loan Readability (Example)
+# Cross-Chain Loan Recording — Source → Destination
 
-End-to-end reference: register, fund, and repay a loan on Sepolia (source chain), then mirror loan state on CC3 testnet (hub) via attested block proofs and `USCLoanReadabilityManager`.
+End-to-end reference for the **SourceDestinationLoanRecording** use case: register, fund, and repay a loan on **one source chain** (Sepolia), then mirror loan state on **one destination chain** (CC3 testnet) via attested block proofs and `USCLoanReadabilityManager`.
+
 
 ### Contract layout
 
@@ -26,7 +27,7 @@ scripts/loan-readability/            # deploy, setup, source, cc3 scripts
 
 ## Flow Components
 
-Each loan lifecycle step on the source chain produces an event that can be proved to CC3. The hub never holds ERC20 — it only updates read-only loan state.
+Each loan lifecycle step on the **source** chain produces an event that can be proved to the **destination** chain. The destination never holds ERC20 — it only records loan state mirrored from that one source. This flow does not aggregate or reconcile events from multiple source chains.
 
 | Step | Source chain | Event / action | Prover output | Hub action | Hub state after |
 |------|--------------|----------------|---------------|------------|-----------------|
@@ -39,7 +40,7 @@ Each loan lifecycle step on the source chain produces an event that can be prove
 - **Registry** — bilateral loan agreement: lender + borrower signatures, full `LoanTerms`, assigns `loanId`. No token transfers. Used for the heavy **register** proof (event + tx calldata cross-check).
 - **Helper** — ERC20 settlement: lender funds borrower, borrower repays lender. Emits simple **fund/repay** events keyed by `loanId`. CC3 mirrors settlement status only; tokens stay on source.
 
-**Loan ID sync:** Hub `sourceLoanId` is taken from the attested `LoanRegistered` event on the source chain (`topics[1]`). Both `USCLoanReadabilityManager` and `DestinationLoanRecording` enforce a **1:1** link to a single prover `chainKey`. Fund and repay proofs must use the same ID.
+**Loan ID sync:** Destination `sourceLoanId` is taken from the attested `LoanRegistered` event on the source chain (`topics[1]`). Both `USCLoanReadabilityManager` and `DestinationLoanRecording` enforce a **source ↔ destination link** via a single configured `chainKey` — not a list of allowed source chains. Fund and repay proofs must use the same ID **and** the same `chainKey` as registration.
 
 **Signatures:** Lender and borrower sign **EIP-712** typed data (`SourceLoanRegistry` / `1` / `chainId` / registry address) including the explicit `loanId` (= `nextLoanId` at sign time). See `LoanRegisterEIP712.sol` and `scripts/loan-readability/shared.ts`.
 
@@ -74,13 +75,13 @@ Phase 1 — Source chain (Sepolia)
       → emits LoanRepaid(loanId, amount)
       → Prover indexes tx → REPAY_PROOF_URL
 
-Phase 2 — Hub setup (CC3 testnet, once per deploy)
+Phase 2 — Destination setup (CC3 testnet, once per **source ↔ destination pair**)
 
   Admin → USCLoanReadabilityManager.setLoanTarget(DestinationLoanRecording)
   Admin → DestinationLoanRecording.grantRole(READABILITY_ROLE, manager)
   Admin → manager.configureSourceChain(chainKey, sourceEvmChainId, SourceLoanRegistry, SourceLoanHelper)
   Admin → DestinationLoanRecording.configureSourceChain(chainKey, sourceEvmChainId, SourceLoanRegistry)
-      (single 1:1 source link — manager and hub reject other chainKeys)
+      (1:1 only — one chainKey, one registry; proofs from any other chainKey revert)
 
 Phase 3 — Mirror state on CC3
 
@@ -146,7 +147,8 @@ Register proofs are heavier (calldata + event match). Fund/repay proofs only rea
 
 ```
 ╔══════════════════════════════════════════════════════════════════════════════════════════╗
-║                     CROSS-CHAIN LOAN READABILITY — COMPONENT MAP                         ║
+║        SOURCE → DESTINATION LOAN RECORDING — COMPONENT MAP                               ║
+║        One source chain (Sepolia) ↔ one destination chain (CC3)                          ║
 ╚══════════════════════════════════════════════════════════════════════════════════════════╝
 
  ┌────────────────────────────── SOURCE CHAIN (Sepolia) ──────────────────────────────────┐
@@ -160,8 +162,8 @@ Register proofs are heavier (calldata + event match). Fund/repay proofs only rea
  │   │  (terms + signatures)│         │  repayLoan()         │                            │
  │   │  assigns loanId      │         │    → LoanRepaid      │                            │
  │   └──────────┬───────────┘         └──────────┬───────────┘                            │
- │              │ events                        │ events + ERC20                         │
- │              └────────────────┬─────────────┘                                        │
+ │              │ events                        │ events + ERC20                          │
+ │              └────────────────┬─────────────┘                                          │
  │                               │ txs indexed by                                         │
  │                               ▼                                                        │
  │                    ┌─────────────────────┐                                             │
@@ -279,7 +281,7 @@ function repayLoan(uint256 loanId, uint256 amount) external;  // borrower only �
 
 ### 3. DestinationLoanRecording (CC3)
 
-**Responsibility:** Hub loan state mirror (1:1 with one source chain). Updated only by `USCLoanReadabilityManager` (`READABILITY_ROLE`).
+**Responsibility:** Destination-side loan state mirror for **one source chain only**. Updated only by `USCLoanReadabilityManager` (`READABILITY_ROLE`). This contract is not designed to accept proofs from multiple source `chainKey` values; `configureSourceChain` binds a single source and cannot be extended to a second source in-place.
 
 ```solidity
 function configureSourceChain(bytes32 chainKey, uint256 sourceEvmChainId, address loanRegistry) external;
@@ -320,7 +322,7 @@ function getLoanOrder(bytes32 chainKey, uint256 sourceLoanId) external view retu
 
 ### 5. USCLoanReadabilityManager (CC3)
 
-**Responsibility:** Orchestrate proof verification and hub updates. Dedupes queries via `processedQueries[queryId]`.
+**Responsibility:** Orchestrate proof verification and destination updates for **one configured source chain**. Dedupes queries via `processedQueries[queryId]`. Not a multi-chain router: `execute` rejects proofs when `chainKey != sourceChainKey`.
 
 ```solidity
 function execute(
@@ -514,8 +516,9 @@ Each deploy script targets **one chain only** — do not mix Sepolia and CC3 add
 
 | Topic | Behavior |
 |-------|----------|
+| **source → destination** | Each manager + `DestinationLoanRecording` pair mirrors **one** source chain. Multi-source → single destination is **out of scope**; use separate destination deploys per source |
 | **Proof replay** | `processedQueries[queryId]` prevents re-submitting the same `(chainKey, blockHeight, txIndex)` proof |
-| **Single source chain** | Manager and `DestinationLoanRecording` accept only configured `sourceChainKey` |
+| **Single source chain** | Manager and `DestinationLoanRecording` accept only the configured `sourceChainKey`; other chain keys revert |
 | **Emitter trust (fail-closed)** | `authorizedLoanRegistry` / `authorizedSourceContract` must be set; unset or wrong emitter reverts |
 | **Unconfigured hub** | `execute` reverts with `SourceChainNotConfigured` until `configureSourceChain` is called |
 | **Register integrity** | `LoanRegistered` event fields are cross-checked against decoded `registerLoan` calldata (`RegisterEventMismatch`) |
