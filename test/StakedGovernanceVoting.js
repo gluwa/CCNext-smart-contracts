@@ -1,5 +1,10 @@
 const assert = require("node:assert/strict");
 const { ethers } = require("hardhat");
+const {
+    buildGovernanceTallyQuery,
+} = require("../scripts/buildGovernanceTallyQuery");
+
+const CHAIN_KEY = 1;
 
 describe("StakedGovernanceVoting", function () {
     let voter;
@@ -15,7 +20,7 @@ describe("StakedGovernanceVoting", function () {
         await token.mint(voter.address, 1000);
 
         const Voting = await ethers.getContractFactory("StakedGovernanceVoting");
-        voting = await Voting.deploy(await token.getAddress(), 100);
+        voting = await Voting.deploy(await token.getAddress(), CHAIN_KEY);
         await voting.waitForDeployment();
 
         await token.connect(voter).approve(await voting.getAddress(), 1000);
@@ -63,13 +68,40 @@ describe("StakedGovernanceVoting", function () {
         await assert.rejects(voting.connect(voter).castVote(1, 1), /Already voted/);
 
         await setNextBlockTimestamp(end);
-        await voting.finalizeChainTally(1);
+        const finalizeTransaction = await voting.finalizeChainTally(1);
+        const finalizeReceipt = await finalizeTransaction.wait();
 
         const proposal = await voting.getProposal(1);
         assert.equal(proposal.againstVotes, 100n);
         assert.equal(proposal.tallyFinalized, true);
 
+        const { query, queryId } = await buildGovernanceTallyQuery(
+            ethers.provider,
+            finalizeReceipt.hash,
+            await voting.getAddress(),
+            CHAIN_KEY,
+        );
+        assert.equal(query.chainId, BigInt(CHAIN_KEY));
+        assert.equal(query.height, BigInt(finalizeReceipt.blockNumber));
+        assert.equal(query.index, BigInt(finalizeReceipt.index));
+        assert.equal(query.layoutSegments.length, 10);
+        assert.equal(query.layoutSegments.every(({ size }) => size === 32n), true);
+
+        const MockProver = await ethers.getContractFactory("MockCreditcoinPublicProver");
+        const mockProver = await MockProver.deploy();
+        await mockProver.waitForDeployment();
+        assert.equal(queryId, await mockProver.computeQueryId(query));
+
         await assert.rejects(voting.finalizeChainTally(1), /Tally already finalized/);
+    });
+
+    it("rejects a zero USC source-chain key", async function () {
+        const Voting = await ethers.getContractFactory("StakedGovernanceVoting");
+
+        await assert.rejects(
+            Voting.deploy(await token.getAddress(), 0),
+            /Invalid chain key/,
+        );
     });
 
     async function openFutureProposal(proposalId) {

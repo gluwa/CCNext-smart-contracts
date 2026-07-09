@@ -73,6 +73,7 @@ contract StakedGovernanceVoting is Ownable {
 
     constructor(address stakeToken_, uint64 chainKey_) Ownable(msg.sender) {
         require(stakeToken_ != address(0), "Voting: Invalid stake token");
+        require(chainKey_ != 0, "Voting: Invalid chain key");
         stakeToken = IERC20(stakeToken_);
         chainKey = chainKey_;
     }

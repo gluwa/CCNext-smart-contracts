@@ -57,9 +57,10 @@ The system consists of two contracts:
 ## End-to-end flow
 
 1. **Setup (once):** Deploy `StakedGovernanceVoting` on each voting chain with that chain's
-   `chainKey` and the ERC20 staking token. Deploy `CrossChainGovernorHub` on Creditcoin USC and
-   register each `(chainKey, sourceChainId, spoke contract, prover contract)` via
-   `registerVotingChain`, plus the trusted query submitter accounts via `setTrustedQuerySubmitter`.
+   USC source-chain `chainKey` and the ERC20 staking token. This is the chain's unique key in the
+   Creditcoin chain registry, not its native EVM chain ID. Deploy `CrossChainGovernorHub` on
+   Creditcoin USC and register each `(chainKey, spoke contract, prover contract)` via
+   `registerVotingChain`, plus the trusted query relayer accounts via `setTrustedQuerySubmitter`.
 2. **Create a proposal:** Call `createProposal` on the hub, choose shared `votingStart` and
    `votingEnd` timestamps, then call `openProposal(proposalId, votingStart, votingEnd)` with the
    same proposal id and timestamps on each voting chain.
@@ -69,9 +70,10 @@ The system consists of two contracts:
    window closes.
 4. **Finalize local tallies:** After the voting window ends, anyone calls `finalizeChainTally` on
    each chain, emitting `ChainTallyFinalized(proposalId, chainKey, forVotes, againstVotes, abstainVotes)`.
-5. **Prove the tallies:** For each chain, a USC readability query is submitted proving the
-   `ChainTallyFinalized` event. Once attested, `submitChainTally(proverContract, queryId)` is called
-   on the hub, which verifies the query and records the chain's tally.
+5. **Prove the tallies:** For each chain, build the ten-field USC readability query with
+   [`scripts/buildGovernanceTallyQuery.js`](../../scripts/buildGovernanceTallyQuery.js), submit it
+   to that chain's public prover, and wait for the result. Then a trusted relayer calls
+   `submitChainTally(proverContract, queryId)` on the hub, which verifies and records the tally.
 6. **Consolidate:** Once at least 3 chains (configurable per proposal, minimum 3) have reported,
    anyone calls `finalizeProposal` to consolidate all tallies into the final crosschain result.
 
@@ -79,32 +81,44 @@ The system consists of two contracts:
 
 `submitChainTally` accepts a query only when **all** of the following hold:
 
-- the caller is a trusted submitter and matches the query principal;
+- the caller is a trusted relayer;
 - the query id has not been used before (replay protection);
 - the query has a verified result available from the registered USC prover for that voting chain;
 - the returned result segments match the query layout and the source transaction succeeded;
-- the proof source chain id matches the chain registered for the tally's `chainKey`;
+- the proof's USC source-chain key matches the `chainKey` embedded in the tally event;
 - the event signature segment matches `ChainTallyFinalized(uint256,uint64,uint256,uint256,uint256)`;
 - the contract that emitted the event is the registered spoke contract for the chain key claimed
   inside the event itself;
 - the proposal exists, is still active, and that chain has not already reported.
 
-The submitter check is intentionally tied to `msg.sender`, not only the prover's stored
-`principal`: the public prover accepts `principal` as query-submission data, so the hub must also
-require the same trusted account to relay `submitChainTally`.
+Authorization is intentionally tied to the hub caller, not the prover's stored `principal`.
+`principal` is caller-supplied when a query is submitted and is not included in the query id, so it
+cannot authenticate who selected a query. If someone front-runs the same query with a different
+principal, its proven transaction, layout, and query id remain identical and the trusted relayer can
+still submit the result to the hub.
 
-Because a query id is `keccak256(abi.encode(query))` and `principal` is set by whoever calls the
-prover's `submitQuery` first, a bad actor watching the mempool can front-run the trusted worker
-with the identical query but their own `principal`. This does not let them forge a tally — the hub
-still rejects the resulting query on the `principal == msg.sender` (untrusted caller) check — but it
-does grief the trusted worker, whose own `submitQuery` reverts because the query already exists.
-The effect is a bounded delay only: the prover allows the query to be resubmitted once it times out,
-after which the worker can claim the principal and relay the tally normally.
+The layout check accepts transaction-specific segment offsets but requires every segment to read a
+full 32-byte word. The governance query builder computes those offsets from the actual finalized
+transaction and receipt using `@gluwa/usc-sdk`; offsets cannot be copied from another transaction or
+event layout. The hub relies on segment ordering rather than the prover's reported
+`ResultSegment.offset`, which the prover types mark as redundant.
 
-The layout check accepts any segment offsets but requires every segment to read a full 32-byte word,
-matching the real USC readability layout (`scripts/common/utils.js` `LAYOUT_SEGMENTS`). It relies on
-segment ordering rather than the prover's reported `ResultSegment.offset`, which the prover types
-mark as redundant.
+## Build a tally query
+
+After `finalizeChainTally` is mined on a voting chain, run:
+
+```bash
+node scripts/buildGovernanceTallyQuery.js \
+  <source-rpc-url> \
+  <finalize-transaction-hash> \
+  <staked-governance-voting-address> \
+  <usc-source-chain-key>
+```
+
+The script locates the `ChainTallyFinalized` event from the expected spoke and chain key, computes
+the ten transaction-specific layout segments, and prints the `ChainQuery` and its `queryId`. Submit
+that exact `ChainQuery` to the public prover with the trusted relayer address as the principal, wait
+until its state is `ResultAvailable`, and pass the printed query id to `submitChainTally`.
 
 The expected result segment layout follows the standard USC readability layout:
 

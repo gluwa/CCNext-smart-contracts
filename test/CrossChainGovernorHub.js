@@ -1,27 +1,26 @@
 const assert = require("node:assert/strict");
 const { ethers } = require("hardhat");
 
-const CHAIN_KEY = 100;
-const SOURCE_CHAIN_ID = 11155111;
-const CHAIN_KEY_2 = 101;
-const SOURCE_CHAIN_ID_2 = 84532;
-const CHAIN_KEY_3 = 102;
-const SOURCE_CHAIN_ID_3 = 97;
+// USC source-chain keys, not the chains' native EVM chain IDs.
+const CHAIN_KEY = 1;
+const CHAIN_KEY_2 = 2;
+const CHAIN_KEY_3 = 3;
 const RESULT_AVAILABLE = 2;
 const SUBMITTED = 1;
 
 describe("CrossChainGovernorHub", function () {
     let owner;
     let trustedSubmitter;
-    let otherTrustedSubmitter;
     let attacker;
     let hub;
     let prover;
+    let prover2;
+    let prover3;
     let fakeProver;
     let spokeContract;
 
     beforeEach(async function () {
-        [owner, trustedSubmitter, otherTrustedSubmitter, attacker] = await ethers.getSigners();
+        [owner, trustedSubmitter, attacker] = await ethers.getSigners();
         spokeContract = owner.address;
 
         const Hub = await ethers.getContractFactory("CrossChainGovernorHub");
@@ -31,12 +30,16 @@ describe("CrossChainGovernorHub", function () {
         const MockProver = await ethers.getContractFactory("MockCreditcoinPublicProver");
         prover = await MockProver.deploy();
         await prover.waitForDeployment();
+        prover2 = await MockProver.deploy();
+        await prover2.waitForDeployment();
+        prover3 = await MockProver.deploy();
+        await prover3.waitForDeployment();
         fakeProver = await MockProver.deploy();
         await fakeProver.waitForDeployment();
 
-        await registerVotingChain(CHAIN_KEY, SOURCE_CHAIN_ID);
-        await registerVotingChain(CHAIN_KEY_2, SOURCE_CHAIN_ID_2);
-        await registerVotingChain(CHAIN_KEY_3, SOURCE_CHAIN_ID_3);
+        await registerVotingChain(CHAIN_KEY, hub, prover);
+        await registerVotingChain(CHAIN_KEY_2, hub, prover2);
+        await registerVotingChain(CHAIN_KEY_3, hub, prover3);
         await hub.setTrustedQuerySubmitter(trustedSubmitter.address, true);
         await hub.createProposal(1, "proposal", 3);
     });
@@ -63,22 +66,20 @@ describe("CrossChainGovernorHub", function () {
         const queryId2 = id("chain-2");
         const queryId3 = id("chain-3");
         await setTallyQuery(prover, queryId1, { forVotes: 10, againstVotes: 4 });
-        await setTallyQuery(prover, queryId2, {
-            sourceChainId: SOURCE_CHAIN_ID_2,
+        await setTallyQuery(prover2, queryId2, {
             eventChainKey: CHAIN_KEY_2,
             forVotes: 9,
             againstVotes: 3,
         });
-        await setTallyQuery(prover, queryId3, {
-            sourceChainId: SOURCE_CHAIN_ID_3,
+        await setTallyQuery(prover3, queryId3, {
             eventChainKey: CHAIN_KEY_3,
             forVotes: 8,
             againstVotes: 5,
         });
 
         await hub.connect(trustedSubmitter).submitChainTally(await prover.getAddress(), queryId1);
-        await hub.connect(trustedSubmitter).submitChainTally(await prover.getAddress(), queryId2);
-        await hub.connect(trustedSubmitter).submitChainTally(await prover.getAddress(), queryId3);
+        await hub.connect(trustedSubmitter).submitChainTally(await prover2.getAddress(), queryId2);
+        await hub.connect(trustedSubmitter).submitChainTally(await prover3.getAddress(), queryId3);
         await hub.finalizeProposal(1);
 
         const proposal = await hub.getProposal(1);
@@ -93,9 +94,25 @@ describe("CrossChainGovernorHub", function () {
         const emptyHub = await Hub.deploy();
         await emptyHub.waitForDeployment();
 
-        await registerVotingChain(CHAIN_KEY, SOURCE_CHAIN_ID, emptyHub);
-        await registerVotingChain(CHAIN_KEY_2, SOURCE_CHAIN_ID_2, emptyHub);
+        await registerVotingChain(CHAIN_KEY, emptyHub, prover);
+        await registerVotingChain(CHAIN_KEY_2, emptyHub, prover2);
 
+        await assert.rejects(
+            emptyHub.createProposal(1, "proposal", 3),
+            /Not enough registered chains/,
+        );
+    });
+
+    it("counts each USC source-chain key only once", async function () {
+        const Hub = await ethers.getContractFactory("CrossChainGovernorHub");
+        const emptyHub = await Hub.deploy();
+        await emptyHub.waitForDeployment();
+
+        await registerVotingChain(CHAIN_KEY, emptyHub, prover);
+        await registerVotingChain(CHAIN_KEY, emptyHub, fakeProver);
+        await registerVotingChain(CHAIN_KEY_2, emptyHub, prover2);
+
+        assert.equal(await emptyHub.registeredVotingChainCount(), 2n);
         await assert.rejects(
             emptyHub.createProposal(1, "proposal", 3),
             /Not enough registered chains/,
@@ -110,7 +127,6 @@ describe("CrossChainGovernorHub", function () {
         await assert.rejects(
             emptyHub.registerVotingChain(
                 0,
-                SOURCE_CHAIN_ID,
                 spokeContract,
                 await prover.getAddress(),
             ),
@@ -119,23 +135,13 @@ describe("CrossChainGovernorHub", function () {
         await assert.rejects(
             emptyHub.registerVotingChain(
                 CHAIN_KEY,
-                0,
-                spokeContract,
-                await prover.getAddress(),
-            ),
-            /Invalid source chain/,
-        );
-        await assert.rejects(
-            emptyHub.registerVotingChain(
-                CHAIN_KEY,
-                SOURCE_CHAIN_ID,
                 ethers.ZeroAddress,
                 await prover.getAddress(),
             ),
             /Invalid spoke contract/,
         );
         await assert.rejects(
-            emptyHub.registerVotingChain(CHAIN_KEY, SOURCE_CHAIN_ID, spokeContract, ethers.ZeroAddress),
+            emptyHub.registerVotingChain(CHAIN_KEY, spokeContract, ethers.ZeroAddress),
             /Invalid prover contract/,
         );
         await assert.rejects(
@@ -154,15 +160,13 @@ describe("CrossChainGovernorHub", function () {
         );
     });
 
-    it("requires the trusted caller to match the query principal", async function () {
-        const queryId = id("principal-mismatch");
-        await hub.setTrustedQuerySubmitter(otherTrustedSubmitter.address, true);
-        await setTallyQuery(prover, queryId, { principal: trustedSubmitter.address });
+    it("accepts the intended query when its principal was front-run", async function () {
+        const queryId = id("front-run-principal");
+        await setTallyQuery(prover, queryId, { principal: attacker.address });
 
-        await assert.rejects(
-            hub.connect(otherTrustedSubmitter).submitChainTally(await prover.getAddress(), queryId),
-            /Query principal mismatch/,
-        );
+        await hub.connect(trustedSubmitter).submitChainTally(await prover.getAddress(), queryId);
+
+        assert.equal((await hub.getChainTally(1, CHAIN_KEY)).recorded, true);
     });
 
     it("rejects tallies from an unregistered prover contract", async function () {
@@ -177,7 +181,7 @@ describe("CrossChainGovernorHub", function () {
 
     it("rejects tallies proven for a different source chain", async function () {
         const queryId = id("wrong-source-chain");
-        await setTallyQuery(prover, queryId, { sourceChainId: SOURCE_CHAIN_ID + 1 });
+        await setTallyQuery(prover, queryId, { sourceChainKey: CHAIN_KEY + 1 });
 
         await assert.rejects(
             hub.connect(trustedSubmitter).submitChainTally(await prover.getAddress(), queryId),
@@ -222,7 +226,7 @@ describe("CrossChainGovernorHub", function () {
         await targetProver.setTallyQuery(
             queryId,
             overrides.state ?? RESULT_AVAILABLE,
-            overrides.sourceChainId ?? SOURCE_CHAIN_ID,
+            overrides.sourceChainKey ?? overrides.eventChainKey ?? CHAIN_KEY,
             overrides.principal ?? trustedSubmitter.address,
             overrides.emitter ?? spokeContract,
             await hub.CHAIN_TALLY_FINALIZED_SELECTOR(),
@@ -234,12 +238,11 @@ describe("CrossChainGovernorHub", function () {
         );
     }
 
-    async function registerVotingChain(chainKey, sourceChainId, targetHub = hub) {
+    async function registerVotingChain(chainKey, targetHub = hub, targetProver = prover) {
         await targetHub.registerVotingChain(
             chainKey,
-            sourceChainId,
             spokeContract,
-            await prover.getAddress(),
+            await targetProver.getAddress(),
         );
     }
 });

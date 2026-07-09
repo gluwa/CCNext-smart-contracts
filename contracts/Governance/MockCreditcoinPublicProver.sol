@@ -10,7 +10,7 @@ contract MockCreditcoinPublicProver is ICreditcoinPublicProver {
     function setTallyQuery(
         bytes32 queryId,
         QueryState state,
-        uint64 sourceChainId,
+        uint64 sourceChainKey,
         address principal,
         address emitter,
         bytes32 eventSignature,
@@ -22,7 +22,7 @@ contract MockCreditcoinPublicProver is ICreditcoinPublicProver {
     ) external {
         QueryDetails storage queryDetails = queries[queryId];
         queryDetails.state = state;
-        queryDetails.query.chainId = sourceChainId;
+        queryDetails.query.chainId = sourceChainKey;
         queryDetails.query.height = 1;
         queryDetails.query.index = 1;
         queryDetails.principal = principal;
@@ -53,6 +53,10 @@ contract MockCreditcoinPublicProver is ICreditcoinPublicProver {
         bytes32 queryId
     ) external view override returns (QueryDetails memory queryDetails) {
         return queries[queryId];
+    }
+
+    function computeQueryId(ChainQuery calldata query) external pure returns (bytes32) {
+        return keccak256(abi.encode(query));
     }
 
     function setReceiptStatus(bytes32 queryId, uint256 status) external {
