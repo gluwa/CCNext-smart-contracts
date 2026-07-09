@@ -49,7 +49,12 @@ contract CrossChainGovernorHub is Ownable {
         ProposalState state;
     }
 
-    event VotingChainRegistered(uint64 indexed chainKey, address spokeContract);
+    event VotingChainRegistered(
+        uint64 indexed chainKey,
+        uint64 indexed sourceChainId,
+        address spokeContract,
+        address proverContract
+    );
     event TrustedQuerySubmitterSet(address indexed submitter, bool trusted);
     event ProposalCreated(uint256 indexed proposalId, string description, uint64 minChainTallies);
     event ChainTallyRecorded(
@@ -73,10 +78,18 @@ contract CrossChainGovernorHub is Ownable {
     bytes32 private constant STORAGE_LOCATION =
         0x737e03fe02bda182a7d9c29b29d27ded023bc42630f3ce5d0dc49e8fddee1800;
 
+    struct VotingChainConfig {
+        bool registered;
+        address spokeContract;
+        address proverContract;
+        uint64 sourceChainId;
+    }
+
     struct HubStorage {
-        // chainKey => StakedGovernanceVoting spoke contract on that chain
-        mapping(uint64 => address) votingChains;
-        // accounts allowed to be the principal of accepted readability queries
+        // chainKey => voting chain metadata
+        mapping(uint64 => VotingChainConfig) votingChains;
+        uint64 registeredChainCount;
+        // accounts allowed to submit accepted readability queries
         mapping(address => bool) trustedQuerySubmitters;
         mapping(uint256 => Proposal) proposals;
         // proposalId => chainKey => recorded tally
@@ -93,7 +106,17 @@ contract CrossChainGovernorHub is Ownable {
     }
 
     function votingChain(uint64 chainKey) external view returns (address) {
+        return _getHubStorage().votingChains[chainKey].spokeContract;
+    }
+
+    function votingChainConfig(
+        uint64 chainKey
+    ) external view returns (VotingChainConfig memory) {
         return _getHubStorage().votingChains[chainKey];
+    }
+
+    function registeredVotingChainCount() external view returns (uint64) {
+        return _getHubStorage().registeredChainCount;
     }
 
     function isTrustedQuerySubmitter(address submitter) external view returns (bool) {
@@ -115,15 +138,33 @@ contract CrossChainGovernorHub is Ownable {
         return _getHubStorage().usedQueryId[proverContract][queryId];
     }
 
-    /// @notice Register (or update) the trusted spoke contract for a voting chain
-    function registerVotingChain(uint64 chainKey, address spokeContract) external onlyOwner {
+    /// @notice Register (or update) the trusted spoke, source chain, and prover for a voting chain
+    function registerVotingChain(
+        uint64 chainKey,
+        uint64 sourceChainId,
+        address spokeContract,
+        address proverContract
+    ) external onlyOwner {
+        require(chainKey != 0, "Governor: Invalid chain key");
+        require(sourceChainId != 0, "Governor: Invalid source chain");
         require(spokeContract != address(0), "Governor: Invalid spoke contract");
-        _getHubStorage().votingChains[chainKey] = spokeContract;
-        emit VotingChainRegistered(chainKey, spokeContract);
+        require(proverContract != address(0), "Governor: Invalid prover contract");
+        HubStorage storage $ = _getHubStorage();
+        if (!$.votingChains[chainKey].registered) {
+            $.registeredChainCount += 1;
+        }
+        $.votingChains[chainKey] = VotingChainConfig({
+            registered: true,
+            spokeContract: spokeContract,
+            proverContract: proverContract,
+            sourceChainId: sourceChainId
+        });
+        emit VotingChainRegistered(chainKey, sourceChainId, spokeContract, proverContract);
     }
 
-    /// @notice Allow or disallow an account as principal of accepted readability queries
+    /// @notice Allow or disallow an account to submit accepted readability queries
     function setTrustedQuerySubmitter(address submitter, bool trusted) external onlyOwner {
+        require(submitter != address(0), "Governor: Invalid submitter");
         _getHubStorage().trustedQuerySubmitters[submitter] = trusted;
         emit TrustedQuerySubmitterSet(submitter, trusted);
     }
@@ -141,6 +182,10 @@ contract CrossChainGovernorHub is Ownable {
         HubStorage storage $ = _getHubStorage();
         require($.proposals[proposalId].state == ProposalState.None, "Governor: Proposal exists");
         require(minChainTallies >= MIN_VOTING_CHAINS, "Governor: Need at least 3 chains");
+        require(
+            minChainTallies <= $.registeredChainCount,
+            "Governor: Not enough registered chains"
+        );
         Proposal storage proposal = $.proposals[proposalId];
         proposal.description = description;
         proposal.minChainTallies = minChainTallies;
@@ -166,24 +211,33 @@ contract CrossChainGovernorHub is Ownable {
      */
     function submitChainTally(address proverContract, bytes32 queryId) external {
         HubStorage storage $ = _getHubStorage();
+        require($.trustedQuerySubmitters[msg.sender], "Governor: Untrusted submitter");
         require(!$.usedQueryId[proverContract][queryId], "Governor: Query ID already used");
 
         QueryDetails memory queryDetails = ICreditcoinPublicProver(proverContract).getQueryDetails(
             queryId
         );
 
-        // We only accept queries submitted using trusted keys, such as from our own query
-        // builder worker. Otherwise there is no guarantee that the result segments provided
-        // actually pertain to our protocol. They could be constructed by bad actors to look
-        // like a finalized tally, when in fact they come from some completely unrelated
-        // finalized transaction on the source chain.
         require(
-            $.trustedQuerySubmitters[queryDetails.principal],
-            "Governor: Untrusted query submitter"
+            queryDetails.state == QueryState.ResultAvailable,
+            "Governor: Query result unavailable"
+        );
+
+        // We only accept queries submitted and relayed by the same trusted key, such as from
+        // our own query builder worker. The prover's principal is caller-supplied during query
+        // submission, so it is only meaningful when it also matches msg.sender here.
+        require(
+            queryDetails.principal == msg.sender,
+            "Governor: Query principal mismatch"
         );
 
         ResultSegment[] memory resultSegments = queryDetails.resultSegments;
-        require(resultSegments.length >= 10, "Governor: Invalid result length");
+        require(resultSegments.length == 10, "Governor: Invalid result length");
+        _validateQueryLayout(queryDetails.query, resultSegments);
+        require(
+            uint256(bytes32(resultSegments[0].abiBytes)) == 1,
+            "Governor: Source tx failed"
+        );
         require(
             bytes32(resultSegments[4].abiBytes) == CHAIN_TALLY_FINALIZED_SELECTOR,
             "Governor: Invalid event signature"
@@ -198,11 +252,14 @@ contract CrossChainGovernorHub is Ownable {
 
         // The tally must have been emitted by the registered spoke contract for the chain key
         // it claims, so one chain's result cannot impersonate another's
-        address registeredSpoke = $.votingChains[chainKey];
+        VotingChainConfig memory chainConfig = $.votingChains[chainKey];
+        require(chainConfig.registered, "Governor: Voting chain not registered");
+        require(proverContract == chainConfig.proverContract, "Governor: Unexpected prover");
         require(
-            registeredSpoke != address(0) && emitter == registeredSpoke,
-            "Governor: Event not from registered spoke"
+            queryDetails.query.chainId == chainConfig.sourceChainId,
+            "Governor: Unexpected source chain"
         );
+        require(emitter == chainConfig.spokeContract, "Governor: Event not from registered spoke");
 
         Proposal storage proposal = $.proposals[proposalId];
         require(proposal.state == ProposalState.Active, "Governor: Proposal not active");
@@ -251,5 +308,28 @@ contract CrossChainGovernorHub is Ownable {
             proposal.againstVotes,
             proposal.abstainVotes
         );
+    }
+
+    function _validateQueryLayout(
+        ChainQuery memory query,
+        ResultSegment[] memory resultSegments
+    ) private pure {
+        // Each field proven from the source transaction is ABI-encoded into a full 32-byte word,
+        // so every layout segment reads exactly 32 bytes. This mirrors the real USC readability
+        // layout the query builder uses (see scripts/common/utils.js `LAYOUT_SEGMENTS`, whose
+        // segments are all size 32 at protocol-defined byte offsets). We deliberately do not
+        // compare `ResultSegment.offset` against the layout offset: the prover's own type flags
+        // that field as redundant ("potentially not need due to ordering"), and the hub already
+        // relies on the segment ordering (indices 0-9) rather than the reported offsets.
+        require(
+            query.layoutSegments.length == resultSegments.length,
+            "Governor: Invalid query layout"
+        );
+        for (uint256 i; i < resultSegments.length; ) {
+            require(query.layoutSegments[i].size == 32, "Governor: Invalid query layout");
+            unchecked {
+                ++i;
+            }
+        }
     }
 }

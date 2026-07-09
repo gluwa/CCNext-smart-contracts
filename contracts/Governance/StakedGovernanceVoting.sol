@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
@@ -16,6 +17,8 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
  *         many votes were cast.
  */
 contract StakedGovernanceVoting is Ownable {
+    using SafeERC20 for IERC20;
+
     // GovernorBravo vote semantics
     enum VoteSupport {
         /*0*/
@@ -57,7 +60,7 @@ contract StakedGovernanceVoting is Ownable {
     struct VotingStorage {
         mapping(address => uint256) stakedBalance;
         // stake stays locked until the latest votingEnd among proposals the user voted on,
-        // so voting weight cannot be reused across chains within the same voting window
+        // so the voter cannot withdraw while any local proposal they voted on is still open
         mapping(address => uint256) voteLockedUntil;
         mapping(uint256 => Proposal) proposals;
         mapping(uint256 => mapping(address => bool)) hasVoted;
@@ -100,12 +103,12 @@ contract StakedGovernanceVoting is Ownable {
     function stake(uint256 amount) external {
         require(amount > 0, "Voting: Amount must be greater than 0");
         VotingStorage storage $ = _getVotingStorage();
-        require(
-            stakeToken.transferFrom(msg.sender, address(this), amount),
-            "Voting: Transfer failed"
-        );
-        $.stakedBalance[msg.sender] += amount;
-        emit Staked(msg.sender, amount, $.stakedBalance[msg.sender]);
+        uint256 balanceBefore = stakeToken.balanceOf(address(this));
+        stakeToken.safeTransferFrom(msg.sender, address(this), amount);
+        uint256 received = stakeToken.balanceOf(address(this)) - balanceBefore;
+        require(received > 0, "Voting: No tokens received");
+        $.stakedBalance[msg.sender] += received;
+        emit Staked(msg.sender, received, $.stakedBalance[msg.sender]);
     }
 
     /// @notice Withdraw staked tokens once no voting window the staker voted in is still open
@@ -114,25 +117,29 @@ contract StakedGovernanceVoting is Ownable {
         require(amount > 0, "Voting: Amount must be greater than 0");
         require($.stakedBalance[msg.sender] >= amount, "Voting: Insufficient staked balance");
         require(
-            block.timestamp > $.voteLockedUntil[msg.sender],
+            block.timestamp >= $.voteLockedUntil[msg.sender],
             "Voting: Stake locked until voting ends"
         );
         $.stakedBalance[msg.sender] -= amount;
-        require(stakeToken.transfer(msg.sender, amount), "Voting: Transfer failed");
+        stakeToken.safeTransfer(msg.sender, amount);
         emit Unstaked(msg.sender, amount, $.stakedBalance[msg.sender]);
     }
 
     /**
      * @notice Mirror a hub proposal on this chain, opening its local voting window.
      * @param proposalId Proposal id created on the hub (`CrossChainGovernorHub`)
-     * @param votingPeriod Duration of the voting window in seconds
+     * @param votingStart Shared crosschain voting start timestamp
+     * @param votingEnd Shared crosschain voting end timestamp
      */
-    function openProposal(uint256 proposalId, uint256 votingPeriod) external onlyOwner {
+    function openProposal(
+        uint256 proposalId,
+        uint256 votingStart,
+        uint256 votingEnd
+    ) external onlyOwner {
         VotingStorage storage $ = _getVotingStorage();
         require($.proposals[proposalId].votingEnd == 0, "Voting: Proposal already exists");
-        require(votingPeriod > 0, "Voting: Invalid voting period");
-        uint256 votingStart = block.timestamp;
-        uint256 votingEnd = votingStart + votingPeriod;
+        require(votingEnd > votingStart, "Voting: Invalid voting window");
+        require(votingEnd > block.timestamp, "Voting: Voting window already ended");
         $.proposals[proposalId] = Proposal({
             votingStart: votingStart,
             votingEnd: votingEnd,

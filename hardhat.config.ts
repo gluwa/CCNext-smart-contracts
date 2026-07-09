@@ -7,6 +7,7 @@ import * as dotenv from "dotenv";
 dotenv.config({ path: ".env" });
 
 const DEFAULT_OWNER = process.env.OWNER_PRIVATE_KEY;
+const cc3UscAccounts = DEFAULT_OWNER ? [DEFAULT_OWNER] : [];
 
 // Hardhat configuration
 const config: HardhatUserConfig = {
@@ -14,7 +15,7 @@ const config: HardhatUserConfig = {
     cc3_usc_testnet: {
       url: "https://rpc.usc-testnet.creditcoin.network",
       chainId: 102033,
-      accounts: [`${DEFAULT_OWNER}`],
+      accounts: cc3UscAccounts,
       timeout: 360000, // increase timeout  6 minutes
     }
   },

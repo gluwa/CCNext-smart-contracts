@@ -16,8 +16,8 @@ forced to bridge their tokens back to the governance chain.
 ## The proposed solution
 
 Instead of bridging tokens or bridging every individual vote, each chain runs its own local
-stake-and-vote contract and **only the final per-chain tally crosses chains** — read trustlessly by
-the USC prover. This means one prover query per chain per proposal, regardless of how many voters
+stake-and-vote contract and **only the final per-chain tally crosses chains** via an attested USC
+readability query. This means one prover query per chain per proposal, regardless of how many voters
 participated.
 
 The system consists of two contracts:
@@ -58,13 +58,15 @@ The system consists of two contracts:
 
 1. **Setup (once):** Deploy `StakedGovernanceVoting` on each voting chain with that chain's
    `chainKey` and the ERC20 staking token. Deploy `CrossChainGovernorHub` on Creditcoin USC and
-   register each `(chainKey, spoke contract address)` pair via `registerVotingChain`, plus the
-   trusted query submitter accounts via `setTrustedQuerySubmitter`.
-2. **Create a proposal:** Call `createProposal` on the hub, then `openProposal` with the same
-   proposal id on each voting chain to open a local voting window.
+   register each `(chainKey, sourceChainId, spoke contract, prover contract)` via
+   `registerVotingChain`, plus the trusted query submitter accounts via `setTrustedQuerySubmitter`.
+2. **Create a proposal:** Call `createProposal` on the hub, choose shared `votingStart` and
+   `votingEnd` timestamps, then call `openProposal(proposalId, votingStart, votingEnd)` with the
+   same proposal id and timestamps on each voting chain.
 3. **Stake & vote:** On each chain, users `stake` tokens for voting weight, then `castVote` with
    Bravo semantics (`0 = Against`, `1 = For`, `2 = Abstain`). Voting weight equals the user's staked
-   balance at the time of voting, and their stake stays locked until the voting window closes.
+   balance at the time of voting, and their stake stays locked on that chain until the voting
+   window closes.
 4. **Finalize local tallies:** After the voting window ends, anyone calls `finalizeChainTally` on
    each chain, emitting `ChainTallyFinalized(proposalId, chainKey, forVotes, againstVotes, abstainVotes)`.
 5. **Prove the tallies:** For each chain, a USC readability query is submitted proving the
@@ -77,13 +79,32 @@ The system consists of two contracts:
 
 `submitChainTally` accepts a query only when **all** of the following hold:
 
+- the caller is a trusted submitter and matches the query principal;
 - the query id has not been used before (replay protection);
-- the query principal is a trusted submitter, guaranteeing the query layout actually targets our
-  protocol's event (same trust model as [`UniversalBridgeProxy`](../UniversalBridgeProxy.sol));
+- the query has a verified result available from the registered USC prover for that voting chain;
+- the returned result segments match the query layout and the source transaction succeeded;
+- the proof source chain id matches the chain registered for the tally's `chainKey`;
 - the event signature segment matches `ChainTallyFinalized(uint256,uint64,uint256,uint256,uint256)`;
 - the contract that emitted the event is the registered spoke contract for the chain key claimed
   inside the event itself;
 - the proposal exists, is still active, and that chain has not already reported.
+
+The submitter check is intentionally tied to `msg.sender`, not only the prover's stored
+`principal`: the public prover accepts `principal` as query-submission data, so the hub must also
+require the same trusted account to relay `submitChainTally`.
+
+Because a query id is `keccak256(abi.encode(query))` and `principal` is set by whoever calls the
+prover's `submitQuery` first, a bad actor watching the mempool can front-run the trusted worker
+with the identical query but their own `principal`. This does not let them forge a tally — the hub
+still rejects the resulting query on the `principal == msg.sender` (untrusted caller) check — but it
+does grief the trusted worker, whose own `submitQuery` reverts because the query already exists.
+The effect is a bounded delay only: the prover allows the query to be resubmitted once it times out,
+after which the worker can claim the principal and relay the tally normally.
+
+The layout check accepts any segment offsets but requires every segment to read a full 32-byte word,
+matching the real USC readability layout (`scripts/common/utils.js` `LAYOUT_SEGMENTS`). It relies on
+segment ordering rather than the prover's reported `ResultSegment.offset`, which the prover types
+mark as redundant.
 
 The expected result segment layout follows the standard USC readability layout:
 
