@@ -7,6 +7,10 @@ import * as dotenv from "dotenv";
 dotenv.config({ path: ".env" });
 
 const DEFAULT_OWNER = process.env.OWNER_PRIVATE_KEY;
+const SEPOLIA_RPC = process.env.SEPOLIA_RPC_URL ?? "https://sepolia-proxy-rpc.creditcoin.network";
+const SOURCE_PRIVATE_KEY = process.env.SOURCE_WALLET_PRIVATE_KEY ?? DEFAULT_OWNER;
+
+const CREDITCOIN_PRIVATE_KEY = process.env.CREDITCOIN_WALLET_PRIVATE_KEY ?? DEFAULT_OWNER;
 
 // Hardhat configuration
 const config: HardhatUserConfig = {
@@ -14,8 +18,19 @@ const config: HardhatUserConfig = {
     cc3_usc_testnet: {
       url: "https://rpc.usc-testnet.creditcoin.network",
       chainId: 102033,
-      accounts: [`${DEFAULT_OWNER}`],
+      accounts: CREDITCOIN_PRIVATE_KEY ? [`${CREDITCOIN_PRIVATE_KEY}`] : [],
       timeout: 360000, // increase timeout  6 minutes
+    },
+    cc3_testnet: {
+      url: "https://rpc.cc3-testnet.creditcoin.network",
+      chainId: 102031,
+      accounts: CREDITCOIN_PRIVATE_KEY ? [`${CREDITCOIN_PRIVATE_KEY}`] : [],
+      timeout: 360000,
+    },
+    sepolia: {
+      url: SEPOLIA_RPC,
+      chainId: 11155111,
+      accounts: SOURCE_PRIVATE_KEY ? [`${SOURCE_PRIVATE_KEY}`] : [],
     }
   },
   mocha: {
@@ -45,6 +60,28 @@ const config: HardhatUserConfig = {
         }
       }
     ]
+  },
+  etherscan: {
+    // Sepolia: single key uses Etherscan API v2. CC3 testnet uses Blockscout via customChains + per-network key.
+    apiKey: process.env.BLOCKSCOUT_API_KEY
+      ? {
+          sepolia: process.env.ETHERSCAN_API_KEY ?? "",
+          cc3_testnet: process.env.BLOCKSCOUT_API_KEY
+        }
+      : (process.env.ETHERSCAN_API_KEY ?? ""),
+    customChains: [
+      {
+        network: "cc3_testnet",
+        chainId: 102031,
+        urls: {
+          apiURL: "https://creditcoin-testnet.blockscout.com/api",
+          browserURL: "https://creditcoin-testnet.blockscout.com"
+        }
+      }
+    ]
+  },
+  sourcify: {
+    enabled: false
   }
 };
 
