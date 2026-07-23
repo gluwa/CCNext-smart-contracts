@@ -1,10 +1,10 @@
 const assert = require("node:assert/strict");
 const { ethers } = require("hardhat");
-const {
-    buildGovernanceTallyQuery,
-} = require("../scripts/buildGovernanceTallyQuery");
 
 const CHAIN_KEY = 1;
+const CHAIN_TALLY_FINALIZED = ethers.id(
+    "ChainTallyFinalized(uint256,uint64,uint256,uint256,uint256)",
+);
 
 describe("StakedGovernanceVoting", function () {
     let voter;
@@ -75,22 +75,25 @@ describe("StakedGovernanceVoting", function () {
         assert.equal(proposal.againstVotes, 100n);
         assert.equal(proposal.tallyFinalized, true);
 
-        const { query, queryId } = await buildGovernanceTallyQuery(
-            ethers.provider,
-            finalizeReceipt.hash,
-            await voting.getAddress(),
-            CHAIN_KEY,
-        );
-        assert.equal(query.chainId, BigInt(CHAIN_KEY));
-        assert.equal(query.height, BigInt(finalizeReceipt.blockNumber));
-        assert.equal(query.index, BigInt(finalizeReceipt.index));
-        assert.equal(query.layoutSegments.length, 10);
-        assert.equal(query.layoutSegments.every(({ size }) => size === 32n), true);
+        // The finalize transaction emits a single ChainTallyFinalized event carrying the whole
+        // per-chain tally. This is the event a USC readability proof surfaces to the hub.
+        const tallyEvent = finalizeReceipt.logs
+            .map((log) => {
+                try {
+                    return voting.interface.parseLog(log);
+                } catch {
+                    return null;
+                }
+            })
+            .find((parsed) => parsed && parsed.name === "ChainTallyFinalized");
 
-        const MockProver = await ethers.getContractFactory("MockCreditcoinPublicProver");
-        const mockProver = await MockProver.deploy();
-        await mockProver.waitForDeployment();
-        assert.equal(queryId, await mockProver.computeQueryId(query));
+        assert.ok(tallyEvent, "expected a ChainTallyFinalized event");
+        assert.equal(tallyEvent.topic, CHAIN_TALLY_FINALIZED);
+        assert.equal(tallyEvent.args.proposalId, 1n);
+        assert.equal(tallyEvent.args.chainKey, BigInt(CHAIN_KEY));
+        assert.equal(tallyEvent.args.forVotes, 0n);
+        assert.equal(tallyEvent.args.againstVotes, 100n);
+        assert.equal(tallyEvent.args.abstainVotes, 0n);
 
         await assert.rejects(voting.finalizeChainTally(1), /Tally already finalized/);
     });

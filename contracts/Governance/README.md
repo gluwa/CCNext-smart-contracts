@@ -17,7 +17,7 @@ forced to bridge their tokens back to the governance chain.
 
 Instead of bridging tokens or bridging every individual vote, each chain runs its own local
 stake-and-vote contract and **only the final per-chain tally crosses chains** via an attested USC
-readability query. This means one prover query per chain per proposal, regardless of how many voters
+readability proof. This means one prover proof per chain per proposal, regardless of how many voters
 participated.
 
 The system consists of two contracts:
@@ -25,7 +25,32 @@ The system consists of two contracts:
 | Contract | Deployed on | Role |
 | --- | --- | --- |
 | [`StakedGovernanceVoting.sol`](./StakedGovernanceVoting.sol) | Each voting chain (3 or more, e.g. `Ethereum`, `Base`, `BNB Chain`) | Users stake an ERC20 token and cast Bravo-style votes (`Against` / `For` / `Abstain`). Once voting ends, anyone can finalize the local tally, which emits a `ChainTallyFinalized` event. |
-| [`CrossChainGovernorHub.sol`](./CrossChainGovernorHub.sol) | Creditcoin USC (the consolidation chain) | Verifies USC prover queries proving each chain's `ChainTallyFinalized` event, records the per-chain tallies, and consolidates them into a single crosschain result once at least 3 chains have reported. |
+| [`CrossChainGovernorHub.sol`](./CrossChainGovernorHub.sol) | Creditcoin USC (the consolidation chain) | Verifies a USC readability proof of each chain's `ChainTallyFinalized` event through the shared `USCProofVerifier`, records the per-chain tallies, and consolidates them into a single crosschain result once at least 3 chains have reported. |
+
+## How USC readability works here
+
+This example uses the current USC readability model: a **synchronous, single-transaction proof**.
+
+- A shared `USCProofVerifier` on Creditcoin USC fronts the native query-verifier precompile at
+  `0xFD2`. This is the same verifier USC bridge and loan-readability contracts use.
+- A relayer fetches the source-chain **inclusion proof** and **continuity proof** of the finalize
+  transaction from the CC3 prover API and submits them to the hub in one call.
+- `USCProofVerifier.verifyProofs(...)` verifies inclusion + continuity and **returns the proved
+  transaction+receipt bytes**. The hub decodes the receipt with the `EvmV1Decoder` library and
+  reads the tally directly out of the `ChainTallyFinalized` log — no polling, no off-chain result
+  storage, and no pre-decoded result segments.
+
+The USC primitives this example depends on are vendored under [`usc/`](./usc) (copied verbatim from
+the USC core, with the pragma relaxed to compile here):
+
+- [`usc/IUSCProofVerifier.sol`](./usc/IUSCProofVerifier.sol) — the shared verifier interface.
+- [`usc/BlockProverTypes.sol`](./usc/BlockProverTypes.sol) — inclusion / continuity proof structs.
+- [`usc/EvmV1Decoder.sol`](./usc/EvmV1Decoder.sol) — decodes the proved transaction + receipt.
+- [`usc/QueryProofVerificationLib.sol`](./usc/QueryProofVerificationLib.sol) — proof helpers.
+
+[`MockUSCProofVerifier.sol`](./MockUSCProofVerifier.sol) is a local stand-in for the verifier used
+by the tests (returns the proved tx bytes carried in the inclusion proof; `setValid(false)` forces
+a verification failure).
 
 ## Architecture
 
@@ -41,17 +66,19 @@ The system consists of two contracts:
                 │ ChainTallyFinalized          │ ChainTallyFinalized          │
                 ▼                              ▼                              ▼
         ┌─────────────────────────────────────────────────────────────────────────┐
-        │                    USC Prover (readability queries)                     │
-        │      one attested query per chain proving the finalized tally event     │
+        │            CC3 prover API → inclusion proof + continuity proof           │
+        │        one proof per chain proving the finalized tally transaction       │
         └──────────────────────────────────┬──────────────────────────────────────┘
                                            ▼
                           Creditcoin USC (consolidation chain)
-                        ┌─────────────────────────────────────┐
-                        │        CrossChainGovernorHub        │
-                        │  4. submitChainTally(prover, qId)   │  ← once per chain
-                        │  5. finalizeProposal(proposalId)    │  ← requires ≥ 3 chains
-                        │     → Succeeded / Defeated          │
-                        └─────────────────────────────────────┘
+                 ┌───────────────────────────────────────────────────┐
+                 │                CrossChainGovernorHub                │
+                 │  4. submitChainTally(chainKey, height, proofs)      │  ← once per chain
+                 │       → USCProofVerifier.verifyProofs (0xFD2)       │
+                 │       → EvmV1Decoder reads ChainTallyFinalized      │
+                 │  5. finalizeProposal(proposalId)                    │  ← requires ≥ 3 chains
+                 │       → Succeeded / Defeated                        │
+                 └───────────────────────────────────────────────────┘
 ```
 
 ## End-to-end flow
@@ -59,8 +86,9 @@ The system consists of two contracts:
 1. **Setup (once):** Deploy `StakedGovernanceVoting` on each voting chain with that chain's
    USC source-chain `chainKey` and the ERC20 staking token. This is the chain's unique key in the
    Creditcoin chain registry, not its native EVM chain ID. Deploy `CrossChainGovernorHub` on
-   Creditcoin USC and register each `(chainKey, spoke contract, prover contract)` via
-   `registerVotingChain`, plus the trusted query relayer accounts via `setTrustedQuerySubmitter`.
+   Creditcoin USC with the shared `USCProofVerifier` address, then register each
+   `(chainKey, spoke contract)` via `registerVotingChain` and the trusted relayer accounts via
+   `setTrustedQuerySubmitter`.
 2. **Create a proposal:** Call `createProposal` on the hub, choose shared `votingStart` and
    `votingEnd` timestamps, then call `openProposal(proposalId, votingStart, votingEnd)` with the
    same proposal id and timestamps on each voting chain.
@@ -70,75 +98,73 @@ The system consists of two contracts:
    window closes.
 4. **Finalize local tallies:** After the voting window ends, anyone calls `finalizeChainTally` on
    each chain, emitting `ChainTallyFinalized(proposalId, chainKey, forVotes, againstVotes, abstainVotes)`.
-5. **Prove the tallies:** For each chain, build the ten-field USC readability query with
-   [`scripts/buildGovernanceTallyQuery.js`](../../scripts/buildGovernanceTallyQuery.js), submit it
-   to that chain's public prover, and wait for the result. Then a trusted relayer calls
-   `submitChainTally(proverContract, queryId)` on the hub, which verifies and records the tally.
+5. **Prove the tallies:** For each chain, build the proof payload for the finalize transaction with
+   [`scripts/buildGovernanceTallyProof.js`](../../scripts/buildGovernanceTallyProof.js), then a
+   trusted relayer calls `submitChainTally(chainKey, blockHeight, inclusionProof, continuityProof)`
+   on the hub. The hub verifies the proof and records the tally in the same transaction.
 6. **Consolidate:** Once at least 3 chains (configurable per proposal, minimum 3) have reported,
    anyone calls `finalizeProposal` to consolidate all tallies into the final crosschain result.
 
-## How the hub verifies a tally query
+## How the hub verifies a tally proof
 
-`submitChainTally` accepts a query only when **all** of the following hold:
+`submitChainTally` accepts a proof only when **all** of the following hold:
 
 - the caller is a trusted relayer;
-- the query id has not been used before (replay protection);
-- the query has a verified result available from the registered USC prover for that voting chain;
-- the returned result segments match the query layout and the source transaction succeeded;
-- the proof's USC source-chain key matches the `chainKey` embedded in the tally event;
-- the event signature segment matches `ChainTallyFinalized(uint256,uint64,uint256,uint256,uint256)`;
-- the contract that emitted the event is the registered spoke contract for the chain key claimed
-  inside the event itself;
+- the voting chain (`chainKey`) is registered;
+- the source coordinates `(chainKey, blockHeight, txIndex)` have not been used before (replay
+  protection — the tx index is derived from the inclusion proof, binding the id to one source
+  transaction);
+- `USCProofVerifier.verifyProofs` confirms transaction inclusion and chain continuity — otherwise
+  it reverts and nothing is recorded;
+- the proved source transaction succeeded (receipt status `1`);
+- the proved receipt contains exactly one `ChainTallyFinalized` log emitted by the spoke registered
+  for that `chainKey`;
+- the `chainKey` embedded in the event matches the chain the proof is claimed for, so a spoke
+  cannot report a tally on behalf of a different chain;
 - the proposal exists, is still active, and that chain has not already reported.
 
-Authorization is intentionally tied to the hub caller, not the prover's stored `principal`.
-`principal` is caller-supplied when a query is submitted and is not included in the query id, so it
-cannot authenticate who selected a query. If someone front-runs the same query with a different
-principal, its proven transaction, layout, and query id remain identical and the trusted relayer can
-still submit the result to the hub.
+Authorization is intentionally tied to the trusted hub caller. The proof itself only attests that a
+particular source transaction was included and succeeded; it says nothing about who is allowed to
+relay it. Anyone could regenerate the same inclusion/continuity proof for a public transaction, so
+the hub gates submission on `trustedQuerySubmitters` and derives every recorded value from the
+proven event rather than from caller-supplied arguments.
 
-The layout check accepts transaction-specific segment offsets but requires every segment to read a
-full 32-byte word. The governance query builder computes those offsets from the actual finalized
-transaction and receipt using `@gluwa/usc-sdk`; offsets cannot be copied from another transaction or
-event layout. The hub relies on segment ordering rather than the prover's reported
-`ResultSegment.offset`, which the prover types mark as redundant.
+## Reading the tally from the proved receipt
 
-## Build a tally query
+The hub does not trust any pre-decoded result; it decodes the proved transaction itself. The
+`ChainTallyFinalized` event has no indexed arguments, so its only topic is the event signature and
+all five values live in the log `data` as five 32-byte words:
+
+```text
+topic[0] : ChainTallyFinalized(uint256,uint64,uint256,uint256,uint256) signature
+data     : abi.encode(proposalId, chainKey, forVotes, againstVotes, abstainVotes)
+```
+
+`EvmV1Decoder.decodeReceiptFields` returns the receipt status and logs; the hub scans the logs for
+one emitted by the registered spoke with the expected signature and `abi.decode`s its `data`.
+
+## Build a tally proof
 
 After `finalizeChainTally` is mined on a voting chain, run:
 
 ```bash
-node scripts/buildGovernanceTallyQuery.js \
-  <source-rpc-url> \
+node scripts/buildGovernanceTallyProof.js \
+  <usc-source-chain-key> \
   <finalize-transaction-hash> \
-  <staked-governance-voting-address> \
-  <usc-source-chain-key>
+  <cc3-prover-api-url>
 ```
 
-The script locates the `ChainTallyFinalized` event from the expected spoke and chain key, computes
-the ten transaction-specific layout segments, and prints the `ChainQuery` and its `queryId`. Submit
-that exact `ChainQuery` to the public prover with the trusted relayer address as the principal, wait
-until its state is `ResultAvailable`, and pass the printed query id to `submitChainTally`.
-
-The expected result segment layout follows the standard USC readability layout:
-
-```text
-0: Rx  - Status
-1: Tx  - From
-2: Tx  - To
-3: Event - Addr (spoke contract emitting the event)
-4: Event - Signature (ChainTallyFinalized selector)
-5: Event - proposalId
-6: Event - chainKey
-7: Event - forVotes
-8: Event - againstVotes
-9: Event - abstainVotes
-```
+The script uses `@gluwa/usc-sdk`'s `ProverAPIProofGenerator` to fetch the inclusion + continuity
+proofs for the finalize transaction and packs them (via the reusable `packTallyProof` helper) into
+the `chainKey`, `blockHeight`, `inclusionProof`, and `continuityProof` arguments for
+`submitChainTally`. Submit those from the trusted relayer account. The hub validates that the
+proved receipt carries a `ChainTallyFinalized` event from the registered spoke, so no source-chain
+RPC is required by the script itself.
 
 ## Why consolidate tallies instead of relaying votes?
 
 Relaying each `VoteCast` event individually would work with the exact same mechanism (the spoke
 emits Bravo-style `VoteCast` events precisely so that this is possible), but it would require one
-prover query per vote. Consolidating on the spoke first compresses an entire chain's participation
-into a single event — and therefore a single readability query — making the gas and query cost of a
+prover proof per vote. Consolidating on the spoke first compresses an entire chain's participation
+into a single event — and therefore a single readability proof — making the gas and proof cost of a
 proposal constant in the number of voters.

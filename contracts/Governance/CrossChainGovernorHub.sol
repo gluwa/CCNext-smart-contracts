@@ -1,17 +1,24 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.20;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import "@gluwa/creditcoin-public-prover/contracts/sol/Types.sol";
-import {ICreditcoinPublicProver} from "@gluwa/creditcoin-public-prover/contracts/sol/Prover.sol";
+import {IUSCProofVerifier} from "./usc/IUSCProofVerifier.sol";
+import {BlockProverTypes} from "./usc/BlockProverTypes.sol";
+import {EvmV1Decoder} from "./usc/EvmV1Decoder.sol";
 
 /**
  * @title CrossChainGovernorHub
  * @notice Hub contract of the crosschain governance example, deployed on Creditcoin USC (the
  *         consolidation chain). Each voting chain runs a `StakedGovernanceVoting` spoke where
  *         users stake and vote locally; after a proposal's voting window closes the spoke emits
- *         a `ChainTallyFinalized` event. This hub verifies a USC readability query proving that
- *         event for each chain and, once at least `minChainTallies` chains (3 or more) have
- *         reported, consolidates all per-chain tallies into the final crosschain result.
+ *         a `ChainTallyFinalized` event.
+ *
+ *         The hub reads that event through USC readability. A trusted relayer submits the
+ *         source-chain inclusion + continuity proofs of the finalize transaction to the shared
+ *         `USCProofVerifier` (fronting the native `0xFD2` precompile). Verification is
+ *         synchronous: `verifyProofs` returns the proved transaction+receipt bytes, the hub
+ *         decodes the receipt with `EvmV1Decoder`, and reads the tally straight out of the
+ *         `ChainTallyFinalized` log. Once at least `minChainTallies` chains (3 or more) have
+ *         reported, anyone consolidates the per-chain tallies into the final crosschain result.
  */
 contract CrossChainGovernorHub is Ownable {
     /// @notice A crosschain vote must aggregate at least this many chains
@@ -49,11 +56,8 @@ contract CrossChainGovernorHub is Ownable {
         ProposalState state;
     }
 
-    event VotingChainRegistered(
-        uint64 indexed chainKey,
-        address spokeContract,
-        address proverContract
-    );
+    event ProofVerifierSet(address indexed previous, address indexed next);
+    event VotingChainRegistered(uint64 indexed chainKey, address spokeContract);
     event TrustedQuerySubmitterSet(address indexed submitter, bool trusted);
     event ProposalCreated(uint256 indexed proposalId, string description, uint64 minChainTallies);
     event ChainTallyRecorded(
@@ -80,27 +84,37 @@ contract CrossChainGovernorHub is Ownable {
     struct VotingChainConfig {
         bool registered;
         address spokeContract;
-        address proverContract;
     }
 
     struct HubStorage {
+        // shared USC proof verifier (native 0xFD2 precompile front)
+        IUSCProofVerifier proofVerifier;
         // chainKey => voting chain metadata
         mapping(uint64 => VotingChainConfig) votingChains;
         uint64 registeredChainCount;
-        // accounts allowed to relay accepted readability query results
+        // accounts allowed to relay verified source-chain proofs
         mapping(address => bool) trustedQuerySubmitters;
         mapping(uint256 => Proposal) proposals;
         // proposalId => chainKey => recorded tally
         mapping(uint256 => mapping(uint64 => ChainTally)) chainTallies;
-        mapping(address => mapping(bytes32 => bool)) usedQueryId;
+        // proved-once guard, keyed by the source coordinates (chainKey, blockHeight, txIndex)
+        mapping(bytes32 => bool) usedQueryId;
     }
 
-    constructor() Ownable(msg.sender) {}
+    constructor(address proofVerifier_) Ownable(msg.sender) {
+        require(proofVerifier_ != address(0), "Governor: Invalid proof verifier");
+        _getHubStorage().proofVerifier = IUSCProofVerifier(proofVerifier_);
+        emit ProofVerifierSet(address(0), proofVerifier_);
+    }
 
     function _getHubStorage() private pure returns (HubStorage storage $) {
         assembly {
             $.slot := STORAGE_LOCATION
         }
+    }
+
+    function proofVerifier() external view returns (address) {
+        return address(_getHubStorage().proofVerifier);
     }
 
     function votingChain(uint64 chainKey) external view returns (address) {
@@ -132,32 +146,38 @@ contract CrossChainGovernorHub is Ownable {
         return _getHubStorage().chainTallies[proposalId][chainKey];
     }
 
-    function isQueryUsed(address proverContract, bytes32 queryId) external view returns (bool) {
-        return _getHubStorage().usedQueryId[proverContract][queryId];
+    function isQueryUsed(bytes32 queryId) external view returns (bool) {
+        return _getHubStorage().usedQueryId[queryId];
     }
 
-    /// @notice Register (or update) the trusted spoke and prover for a USC source-chain key
+    /// @notice Point the hub at a (new) shared USC proof verifier
+    function setProofVerifier(address newVerifier) external onlyOwner {
+        require(newVerifier != address(0), "Governor: Invalid proof verifier");
+        HubStorage storage $ = _getHubStorage();
+        address previous = address($.proofVerifier);
+        $.proofVerifier = IUSCProofVerifier(newVerifier);
+        emit ProofVerifierSet(previous, newVerifier);
+    }
+
+    /// @notice Register (or update) the trusted spoke for a USC source-chain key
     function registerVotingChain(
         uint64 chainKey,
-        address spokeContract,
-        address proverContract
+        address spokeContract
     ) external onlyOwner {
         require(chainKey != 0, "Governor: Invalid chain key");
         require(spokeContract != address(0), "Governor: Invalid spoke contract");
-        require(proverContract != address(0), "Governor: Invalid prover contract");
         HubStorage storage $ = _getHubStorage();
         if (!$.votingChains[chainKey].registered) {
             $.registeredChainCount += 1;
         }
         $.votingChains[chainKey] = VotingChainConfig({
             registered: true,
-            spokeContract: spokeContract,
-            proverContract: proverContract
+            spokeContract: spokeContract
         });
-        emit VotingChainRegistered(chainKey, spokeContract, proverContract);
+        emit VotingChainRegistered(chainKey, spokeContract);
     }
 
-    /// @notice Allow or disallow an account to relay accepted readability query results
+    /// @notice Allow or disallow an account to relay verified source-chain proofs
     function setTrustedQuerySubmitter(address submitter, bool trusted) external onlyOwner {
         require(submitter != address(0), "Governor: Invalid submitter");
         _getHubStorage().trustedQuerySubmitters[submitter] = trusted;
@@ -189,64 +209,57 @@ contract CrossChainGovernorHub is Ownable {
     }
 
     /**
-     * @notice Record one voting chain's finalized tally, proven by a USC readability query of the
-     *         spoke's `ChainTallyFinalized` event.
+     * @notice Record one voting chain's finalized tally, proven by a USC readability proof of the
+     *         spoke's `ChainTallyFinalized` event. Verification runs synchronously: the shared
+     *         proof verifier returns the proved source transaction bytes, which the hub decodes.
      *
-     *         Expected result segment layout:
-     *         0: Rx - Status
-     *         1: Tx - From
-     *         2: Tx - To
-     *         3: Event - Addr (spoke contract emitting the event)
-     *         4: Event - Signature (ChainTallyFinalized selector)
-     *         5: Event - proposalId
-     *         6: Event - chainKey
-     *         7: Event - forVotes
-     *         8: Event - againstVotes
-     *         9: Event - abstainVotes
+     * @param chainKey        USC source-chain key of the voting chain the proof is for
+     * @param blockHeight     Source-chain block number containing the finalize transaction
+     * @param inclusionProof  BinaryMerkle inclusion proof envelope (from the CC3 prover API)
+     * @param continuityProof Continuity proof envelope (from the CC3 prover API)
      */
-    function submitChainTally(address proverContract, bytes32 queryId) external {
+    function submitChainTally(
+        uint64 chainKey,
+        uint64 blockHeight,
+        BlockProverTypes.InclusionProof calldata inclusionProof,
+        BlockProverTypes.ContinuityProof calldata continuityProof
+    ) external {
         HubStorage storage $ = _getHubStorage();
         require($.trustedQuerySubmitters[msg.sender], "Governor: Untrusted submitter");
-        require(!$.usedQueryId[proverContract][queryId], "Governor: Query ID already used");
 
-        QueryDetails memory queryDetails = ICreditcoinPublicProver(proverContract).getQueryDetails(
-            queryId
-        );
-
-        require(
-            queryDetails.state == QueryState.ResultAvailable,
-            "Governor: Query result unavailable"
-        );
-
-        ResultSegment[] memory resultSegments = queryDetails.resultSegments;
-        require(resultSegments.length == 10, "Governor: Invalid result length");
-        _validateQueryLayout(queryDetails.query, resultSegments);
-        require(
-            uint256(bytes32(resultSegments[0].abiBytes)) == 1,
-            "Governor: Source tx failed"
-        );
-        require(
-            bytes32(resultSegments[4].abiBytes) == CHAIN_TALLY_FINALIZED_SELECTOR,
-            "Governor: Invalid event signature"
-        );
-
-        address emitter = address(uint160(uint256(bytes32(resultSegments[3].abiBytes))));
-        uint256 proposalId = uint256(bytes32(resultSegments[5].abiBytes));
-        uint64 chainKey = uint64(uint256(bytes32(resultSegments[6].abiBytes)));
-        uint256 forVotes = uint256(bytes32(resultSegments[7].abiBytes));
-        uint256 againstVotes = uint256(bytes32(resultSegments[8].abiBytes));
-        uint256 abstainVotes = uint256(bytes32(resultSegments[9].abiBytes));
-
-        // The tally must have been emitted by the spoke and prover registered under the same USC
-        // source-chain key carried by both the query and event.
         VotingChainConfig memory chainConfig = $.votingChains[chainKey];
         require(chainConfig.registered, "Governor: Voting chain not registered");
-        require(proverContract == chainConfig.proverContract, "Governor: Unexpected prover");
-        require(
-            queryDetails.query.chainId == chainKey,
-            "Governor: Unexpected source chain"
+
+        // Replay protection keyed by the proved source coordinates. The tx index is derived from
+        // the inclusion proof, so the id is bound to a single source transaction and cannot be
+        // reused. This matches the USC core's readability query id.
+        uint64 txIndex = $.proofVerifier.calculateTxIndex(inclusionProof);
+        bytes32 queryId = keccak256(abi.encodePacked(chainKey, blockHeight, txIndex));
+        require(!$.usedQueryId[queryId], "Governor: Query ID already used");
+
+        // Synchronously verify inclusion + continuity and recover the proved tx+receipt bytes.
+        bytes memory encodedTransaction = $.proofVerifier.verifyProofs(
+            bytes32(uint256(chainKey)),
+            blockHeight,
+            inclusionProof,
+            continuityProof
         );
-        require(emitter == chainConfig.spokeContract, "Governor: Event not from registered spoke");
+
+        require(
+            EvmV1Decoder.isValidTransactionType(EvmV1Decoder.getTransactionType(encodedTransaction)),
+            "Governor: Unsupported tx type"
+        );
+        EvmV1Decoder.ReceiptFields memory receipt = EvmV1Decoder.decodeReceiptFields(
+            encodedTransaction
+        );
+        require(receipt.receiptStatus == 1, "Governor: Source tx failed");
+
+        (
+            uint256 proposalId,
+            uint256 forVotes,
+            uint256 againstVotes,
+            uint256 abstainVotes
+        ) = _readChainTally(receipt, chainConfig.spokeContract, chainKey);
 
         Proposal storage proposal = $.proposals[proposalId];
         require(proposal.state == ProposalState.Active, "Governor: Proposal not active");
@@ -255,7 +268,7 @@ contract CrossChainGovernorHub is Ownable {
             "Governor: Chain already tallied"
         );
 
-        $.usedQueryId[proverContract][queryId] = true;
+        $.usedQueryId[queryId] = true;
         $.chainTallies[proposalId][chainKey] = ChainTally({
             recorded: true,
             forVotes: forVotes,
@@ -297,26 +310,44 @@ contract CrossChainGovernorHub is Ownable {
         );
     }
 
-    function _validateQueryLayout(
-        ChainQuery memory query,
-        ResultSegment[] memory resultSegments
-    ) private pure {
-        // Each field proven from the source transaction is ABI-encoded into a full 32-byte word,
-        // so every layout segment reads exactly 32 bytes. This mirrors the real USC readability
-        // layout produced by scripts/buildGovernanceTallyQuery.js at transaction-specific byte
-        // offsets. We deliberately do not compare `ResultSegment.offset` against the layout
-        // offset: the prover's own type flags that field as redundant ("potentially not need due
-        // to ordering"), and the hub already relies on the segment ordering (indices 0-9) rather
-        // than the reported offsets.
-        require(
-            query.layoutSegments.length == resultSegments.length,
-            "Governor: Invalid query layout"
-        );
-        for (uint256 i; i < resultSegments.length; ) {
-            require(query.layoutSegments[i].size == 32, "Governor: Invalid query layout");
-            unchecked {
-                ++i;
+    /**
+     * @notice Extract the single `ChainTallyFinalized` tally from a proved receipt.
+     * @dev The event must have been emitted by the spoke registered for `chainKey`. It carries no
+     *      indexed arguments, so its only topic is the signature and all five values live in
+     *      `data` as five 32-byte words. The chain key embedded in the event must also match the
+     *      chain the proof is claimed for, so a spoke cannot report on behalf of another chain.
+     */
+    function _readChainTally(
+        EvmV1Decoder.ReceiptFields memory receipt,
+        address spokeContract,
+        uint64 chainKey
+    )
+        private
+        pure
+        returns (uint256 proposalId, uint256 forVotes, uint256 againstVotes, uint256 abstainVotes)
+    {
+        bool found;
+        for (uint256 i; i < receipt.receiptLogs.length; ++i) {
+            EvmV1Decoder.LogEntry memory log = receipt.receiptLogs[i];
+            if (
+                log.address_ != spokeContract ||
+                log.topics.length == 0 ||
+                log.topics[0] != CHAIN_TALLY_FINALIZED_SELECTOR
+            ) {
+                continue;
             }
+            require(log.topics.length == 1, "Governor: Invalid event topics");
+            require(log.data.length == 160, "Governor: Invalid event data");
+            require(!found, "Governor: Ambiguous tally event");
+
+            uint64 eventChainKey;
+            (proposalId, eventChainKey, forVotes, againstVotes, abstainVotes) = abi.decode(
+                log.data,
+                (uint256, uint64, uint256, uint256, uint256)
+            );
+            require(eventChainKey == chainKey, "Governor: Unexpected source chain");
+            found = true;
         }
+        require(found, "Governor: Tally event not found");
     }
 }
